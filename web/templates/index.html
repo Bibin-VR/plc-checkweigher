@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Check-Weigher Reports — Sai Samarth Engg Goa</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: #f0f4f8;
+      color: #222;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1B3A6B;
+      color: #fff;
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    header h1 { font-size: 1.3rem; font-weight: 700; letter-spacing: 0.3px; }
+    header p  { font-size: 0.82rem; opacity: 0.8; margin-top: 2px; }
+    .badge {
+      background: #2E6DA4;
+      color: #fff;
+      border-radius: 20px;
+      padding: 4px 14px;
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+
+    main { max-width: 960px; margin: 32px auto; padding: 0 16px 48px; }
+
+    .empty {
+      text-align: center;
+      padding: 80px 0;
+      color: #888;
+      font-size: 1.1rem;
+    }
+
+    .day-group { margin-bottom: 32px; }
+
+    .day-label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #2E6DA4;
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 2px solid #d0dff0;
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.10);
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: box-shadow 0.15s;
+    }
+    .card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.15); }
+
+    .card-top {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .pdf-icon {
+      width: 40px; height: 40px; flex-shrink: 0;
+      background: #e8f0fb;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .pdf-icon svg { width: 22px; height: 22px; fill: #2E6DA4; }
+
+    .card-info { flex: 1; min-width: 0; }
+    .card-info .batch {
+      font-size: 1rem; font-weight: 700; color: #1B3A6B;
+    }
+    .card-info .meta {
+      font-size: 0.78rem; color: #666; margin-top: 3px;
+    }
+    .card-info .fname {
+      font-size: 0.7rem; color: #aaa; margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .btn {
+      flex: 1;
+      display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+      padding: 7px 0;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-view     { background: #2E6DA4; color: #fff; }
+    .btn-download { background: #e8f0fb; color: #1B3A6B; }
+
+    .btn svg { width: 13px; height: 13px; fill: currentColor; }
+
+    /* PDF viewer overlay */
+    #overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    #overlay.active { display: flex; }
+    #viewer-box {
+      background: #fff;
+      border-radius: 12px;
+      width: 95vw; max-width: 860px;
+      height: 92vh;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+    }
+    #viewer-toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px;
+      background: #1B3A6B;
+      color: #fff;
+      flex-shrink: 0;
+      gap: 8px;
+    }
+    #viewer-title {
+      font-size: 0.82rem; font-weight: 600;
+      flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #viewer-page-info { font-size: 0.78rem; opacity: 0.8; white-space: nowrap; }
+    #viewer-close {
+      background: none; border: none; color: #fff;
+      font-size: 1.3rem; cursor: pointer; line-height: 1;
+      padding: 2px 8px; border-radius: 4px; flex-shrink: 0;
+    }
+    #viewer-close:hover { background: rgba(255,255,255,0.15); }
+    #viewer-scroll {
+      flex: 1;
+      overflow-y: auto;
+      background: #525659;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 12px 8px;
+      gap: 10px;
+    }
+    #viewer-scroll canvas {
+      max-width: 100%;
+      height: auto;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      display: block;
+    }
+    #viewer-loading {
+      color: #ccc; font-size: 0.9rem; margin: auto;
+    }
+
+    /* ── live-update indicator ── */
+    .live-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: #22c55e;
+      display: inline-block; flex-shrink: 0;
+      box-shadow: 0 0 0 0 rgba(34,197,94,.6);
+      animation: live-pulse 2s ease-in-out infinite;
+    }
+    .live-dot.off { background: #888; animation: none; box-shadow: none; }
+    @keyframes live-pulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,.6); }
+      50%      { box-shadow: 0 0 0 5px rgba(34,197,94,0); }
+    }
+    .live-label { font-size: 0.75rem; opacity: 0.7; }
+
+    /* ── new-card highlight ── */
+    .card-new {
+      outline: 2px solid #22c55e;
+      outline-offset: -2px;
+      animation: card-pop 0.4s ease-out;
+    }
+    @keyframes card-pop {
+      from { transform: scale(0.96); opacity: 0; }
+      to   { transform: scale(1);    opacity: 1; }
+    }
+    .new-badge {
+      background: #22c55e; color: #fff;
+      font-size: 0.62rem; font-weight: 700;
+      padding: 2px 6px; border-radius: 8px;
+      letter-spacing: 0.5px; text-transform: uppercase;
+      vertical-align: middle;
+    }
+
+    /* ── toast ── */
+    #toast-container {
+      position: fixed; bottom: 20px; right: 20px;
+      display: flex; flex-direction: column; gap: 8px;
+      z-index: 200; pointer-events: none;
+    }
+    .toast {
+      background: #1B3A6B; color: #fff;
+      padding: 10px 16px; border-radius: 8px;
+      font-size: 0.85rem;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+      border-left: 4px solid #22c55e;
+      animation: toast-in .3s ease;
+    }
+    @keyframes toast-in {
+      from { transform: translateX(16px); opacity: 0; }
+      to   { transform: translateX(0);    opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Sai Samarth Engg Goa</h1>
+    <p>Check-Weigher Production Reports</p>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+    <a href="/live" style="background:rgba(255,255,255,.15);color:#fff;text-decoration:none;
+       padding:4px 13px;border-radius:5px;font-size:0.8rem;white-space:nowrap;">
+      &#9654; Live
+    </a>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <span class="live-dot off" id="live-dot"></span>
+      <span class="live-label">Auto</span>
+    </div>
+    <span class="badge" id="total-badge">{{ total }} report{{ 's' if total != 1 else '' }}</span>
+  </div>
+</header>
+
+<main>
+  {% if not groups %}
+  <div class="empty">No reports found yet.<br>Reports appear here after each production batch.</div>
+  {% else %}
+    {% for date, reports in groups.items() %}
+    <div class="day-group" data-date="{{ date }}">
+      <div class="day-label">{{ date }}</div>
+      <div class="card-grid">
+        {% for r in reports %}
+        <div class="card">
+          <div class="card-top">
+            <div class="pdf-icon">
+              <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>
+            </div>
+            <div class="card-info">
+              <div class="batch">Batch {{ r.batch }}</div>
+              <div class="meta">{{ r.time_str }} &nbsp;·&nbsp; {{ r.size_kb }} KB</div>
+              <div class="fname" title="{{ r.filename }}">{{ r.filename }}</div>
+            </div>
+          </div>
+          <div class="card-actions">
+            <a class="btn btn-view" href="#" onclick="openPdf('/pdf/{{ r.filename }}', '{{ r.filename }}'); return false;">
+              <svg viewBox="0 0 24 24"><path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>
+              View
+            </a>
+            <a class="btn btn-download" href="/download/{{ r.filename }}">
+              <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+              Download
+            </a>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  {% endif %}
+</main>
+
+<!-- PDF viewer overlay -->
+<div id="overlay" onclick="if(event.target===this)closeViewer()">
+  <div id="viewer-box">
+    <div id="viewer-toolbar">
+      <span id="viewer-title"></span>
+      <span id="viewer-page-info"></span>
+      <button id="viewer-close" onclick="closeViewer()">✕</button>
+    </div>
+    <div id="viewer-scroll">
+      <div id="viewer-loading">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/pdf.min.js"></script>
+<script>
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdf.worker.min.js';
+
+  function openPdf(url, name) {
+    const scroll   = document.getElementById('viewer-scroll');
+    const loading  = document.getElementById('viewer-loading');
+    const pageInfo = document.getElementById('viewer-page-info');
+
+    document.getElementById('viewer-title').textContent = name;
+    scroll.innerHTML = '';
+    loading.textContent = 'Loading…';
+    scroll.appendChild(loading);
+    pageInfo.textContent = '';
+    document.getElementById('overlay').classList.add('active');
+
+    const scale = window.innerWidth < 600 ? 1.2 : 1.8;
+
+    pdfjsLib.getDocument(url).promise.then(pdf => {
+      loading.remove();
+      pageInfo.textContent = `${pdf.numPages} page${pdf.numPages > 1 ? 's' : ''}`;
+
+      const renders = [];
+      for (let p = 1; p <= pdf.numPages; p++) {
+        renders.push(
+          pdf.getPage(p).then(page => {
+            const vp     = page.getViewport({ scale });
+            const canvas = document.createElement('canvas');
+            canvas.width  = vp.width;
+            canvas.height = vp.height;
+            canvas.style.width = '100%';
+            return page.render({ canvasContext: canvas.getContext('2d'), viewport: vp })
+                       .promise.then(() => ({ page: p, canvas }));
+          })
+        );
+      }
+      // Append in order regardless of render completion order
+      Promise.all(renders).then(results => {
+        results.sort((a, b) => a.page - b.page)
+               .forEach(r => scroll.appendChild(r.canvas));
+      });
+    }).catch(err => {
+      loading.textContent = 'Failed to load PDF: ' + err.message;
+    });
+  }
+
+  function closeViewer() {
+    document.getElementById('overlay').classList.remove('active');
+    document.getElementById('viewer-scroll').innerHTML =
+      '<div id="viewer-loading">Loading…</div>';
+    document.getElementById('viewer-page-info').textContent = '';
+  }
+
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeViewer(); });
+</script>
+
+<div id="toast-container"></div>
+
+<script>
+  const liveDot      = document.getElementById('live-dot');
+  const totalBadge   = document.getElementById('total-badge');
+  const toastContainer = document.getElementById('toast-container');
+  const mainEl       = document.querySelector('main');
+
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function showToast(msg) {
+    const t = document.createElement('div');
+    t.className = 'toast'; t.textContent = msg;
+    toastContainer.appendChild(t);
+    setTimeout(() => t.remove(), 4500);
+  }
+
+  function createCard(r) {
+    const fn  = r.filename;
+    const fnH = escHtml(fn);
+    const card = document.createElement('div');
+    card.className = 'card card-new';
+    card.innerHTML =
+      '<div class="card-top">' +
+        '<div class="pdf-icon">' +
+          '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>' +
+        '</div>' +
+        '<div class="card-info">' +
+          '<div class="batch">Batch ' + escHtml(r.batch) + ' <span class="new-badge">new</span></div>' +
+          '<div class="meta">' + escHtml(r.time_str) + ' &nbsp;·&nbsp; ' + escHtml(String(r.size_kb)) + ' KB</div>' +
+          '<div class="fname" title="' + fnH + '">' + fnH + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card-actions">' +
+        '<a class="btn btn-view" href="#" onclick="openPdf(\'/pdf/' + fnH + '\',\'' + fnH + '\');return false;">' +
+          '<svg viewBox="0 0 24 24"><path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>' +
+          'View' +
+        '</a>' +
+        '<a class="btn btn-download" href="/download/' + fnH + '">' +
+          '<svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>' +
+          'Download' +
+        '</a>' +
+      '</div>';
+    setTimeout(() => card.classList.remove('card-new'), 8000);
+    return card;
+  }
+
+  function addNewCard(r) {
+    // Remove "no reports" placeholder if present
+    const empty = mainEl.querySelector('.empty');
+    if (empty) empty.remove();
+
+    // Find or create the day group
+    let group = mainEl.querySelector('.day-group[data-date="' + CSS.escape(r.date_str) + '"]');
+    if (!group) {
+      group = document.createElement('div');
+      group.className = 'day-group';
+      group.dataset.date = r.date_str;
+      group.innerHTML =
+        '<div class="day-label">' + escHtml(r.date_str) + '</div>' +
+        '<div class="card-grid"></div>';
+      mainEl.insertBefore(group, mainEl.firstChild);
+    }
+
+    group.querySelector('.card-grid').insertBefore(createCard(r), group.querySelector('.card-grid').firstChild);
+
+    // Update badge count
+    const n = (parseInt(totalBadge.textContent) || 0) + 1;
+    totalBadge.textContent = n + ' report' + (n !== 1 ? 's' : '');
+
+    showToast('New report — Batch ' + r.batch);
+  }
+
+  function connectEvents() {
+    const src = new EventSource('/events');
+    src.onopen  = () => liveDot.classList.remove('off');
+    src.onerror = () => liveDot.classList.add('off');
+    src.onmessage = ev => {
+      try { addNewCard(JSON.parse(ev.data)); } catch (_) {}
+    };
+  }
+
+  connectEvents();
+</script>
+
+</body>
+</html>

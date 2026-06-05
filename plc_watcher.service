@@ -1,0 +1,18 @@
+[Unit]
+Description=PLC Check-Weigher Start Watcher
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/plc_checkweigher
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pi/plc_env/bin/python3 -u /home/pi/plc_checkweigher/plc_watcher.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

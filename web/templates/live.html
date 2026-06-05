@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Dashboard — Sai Samarth Engg Goa</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: #f0f4f8;
+      color: #222;
+      min-height: 100vh;
+    }
+
+    /* ── header ── */
+    header {
+      background: #1B3A6B;
+      color: #fff;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    .hdr-left { display: flex; align-items: center; gap: 12px; }
+    header h1 { font-size: 1.15rem; font-weight: 700; }
+    header p  { font-size: 0.78rem; opacity: 0.75; margin-top: 2px; }
+
+    .plc-dot {
+      width: 11px; height: 11px; border-radius: 50%;
+      background: #888; flex-shrink: 0;
+      box-shadow: 0 0 0 0 rgba(34,197,94,.6);
+    }
+    .plc-dot.online {
+      background: #22c55e;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .plc-dot.offline { background: #f85149; animation: none; }
+    @keyframes pulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,.55); }
+      50%      { box-shadow: 0 0 0 6px rgba(34,197,94,0); }
+    }
+
+    .hdr-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .status-badge {
+      padding: 4px 14px; border-radius: 20px;
+      font-size: 0.8rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .5px;
+      white-space: nowrap;
+    }
+    .status-badge.running  { background: #22c55e; color: #fff; }
+    .status-badge.idle     { background: #e3b341; color: #1a1a1a; }
+    .status-badge.offline  { background: #888;    color: #fff; }
+
+    .hdr-link {
+      background: rgba(255,255,255,.15);
+      color: #fff; text-decoration: none;
+      padding: 5px 14px; border-radius: 5px;
+      font-size: 0.8rem; white-space: nowrap;
+    }
+    .hdr-link:hover { background: rgba(255,255,255,.25); }
+
+    /* ── main layout ── */
+    main { max-width: 1100px; margin: 24px auto; padding: 0 16px 48px; }
+
+    /* ── cards ── */
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.10);
+      padding: 20px 22px;
+    }
+    .card-title {
+      font-size: 0.7rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 1px;
+      color: #2E6DA4; margin-bottom: 14px;
+      padding-bottom: 8px; border-bottom: 2px solid #d0dff0;
+    }
+
+    /* ── top row ── */
+    .top-row {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* ── weight card ── */
+    .weight-value {
+      font-size: 3.2rem; font-weight: 700;
+      letter-spacing: -1px; line-height: 1;
+      text-align: center; margin: 8px 0 4px;
+      transition: color .2s;
+    }
+    .weight-value.accept { color: #16a34a; }
+    .weight-value.reject { color: #dc2626; }
+    .weight-value.idle   { color: #1B3A6B; }
+    .weight-unit {
+      text-align: center; font-size: 0.85rem;
+      color: #888; margin-bottom: 14px;
+    }
+
+    /* gauge bar */
+    .gauge-wrap { position: relative; height: 18px; margin: 10px 0 4px; }
+    .gauge-bg {
+      position: absolute; inset: 0;
+      background: #e5e7eb; border-radius: 9px;
+    }
+    .gauge-ok {
+      position: absolute; top: 0; bottom: 0;
+      background: rgba(34,197,94,.35); border-radius: 2px;
+    }
+    .gauge-needle {
+      position: absolute; top: -3px; bottom: -3px;
+      width: 4px; background: #1B3A6B;
+      border-radius: 2px; transform: translateX(-50%);
+      transition: left .3s ease;
+    }
+    .gauge-needle.accept { background: #16a34a; }
+    .gauge-needle.reject { background: #dc2626; }
+    .gauge-labels {
+      display: flex; justify-content: space-between;
+      font-size: 0.68rem; color: #888; margin-top: 3px;
+    }
+    .target-line {
+      text-align: center; font-size: 0.75rem;
+      color: #6b7280; margin-top: 8px;
+    }
+
+    /* ── stats card ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .stat-box {
+      text-align: center;
+      padding: 12px 6px;
+      border-radius: 8px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+    }
+    .stat-box .num {
+      font-size: 2rem; font-weight: 700;
+      line-height: 1; color: #1B3A6B;
+    }
+    .stat-box .num.accept { color: #16a34a; }
+    .stat-box .num.reject { color: #dc2626; }
+    .stat-box .lbl {
+      font-size: 0.68rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .8px;
+      color: #888; margin-top: 5px;
+    }
+    .pass-rate-bar {
+      height: 6px; background: #e5e7eb;
+      border-radius: 3px; overflow: hidden; margin-top: 6px;
+    }
+    .pass-rate-fill {
+      height: 100%; background: #22c55e;
+      border-radius: 3px; transition: width .4s ease;
+    }
+
+    /* ── batch info ── */
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 10px;
+    }
+    .info-item .lbl {
+      font-size: 0.68rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .8px;
+      color: #888;
+    }
+    .info-item .val {
+      font-size: 0.92rem; font-weight: 600;
+      color: #1B3A6B; margin-top: 2px;
+      white-space: nowrap; overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ── recent items ── */
+    .items-table {
+      width: 100%; border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    .items-table th {
+      text-align: left; padding: 6px 10px;
+      background: #f0f4f8; color: #2E6DA4;
+      font-size: 0.7rem; text-transform: uppercase;
+      letter-spacing: .8px; border-bottom: 2px solid #d0dff0;
+    }
+    .items-table td {
+      padding: 7px 10px;
+      border-bottom: 1px solid #f0f4f8;
+    }
+    .items-table tr:last-child td { border-bottom: none; }
+    .items-table tr.new-row td {
+      animation: row-flash .5s ease-out;
+    }
+    @keyframes row-flash {
+      from { background: #dbeafe; }
+      to   { background: transparent; }
+    }
+    .pill {
+      display: inline-block; padding: 2px 9px;
+      border-radius: 10px; font-size: 0.72rem;
+      font-weight: 700; white-space: nowrap;
+    }
+    .pill.accept { background: #dcfce7; color: #15803d; }
+    .pill.reject { background: #fee2e2; color: #b91c1c; }
+
+    .empty-msg {
+      text-align: center; color: #aaa;
+      padding: 40px 0; font-size: 0.9rem;
+    }
+
+    /* ── layout helpers ── */
+    .row { display: grid; gap: 16px; margin-bottom: 16px; }
+
+    /* ── responsive ── */
+    @media (max-width: 700px) {
+      .top-row { grid-template-columns: 1fr; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .weight-value { font-size: 2.6rem; }
+      header { padding: 10px 14px; }
+    }
+    @media (max-width: 420px) {
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .info-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="hdr-left">
+    <span class="plc-dot" id="plc-dot"></span>
+    <div>
+      <h1>Sai Samarth Engg Goa</h1>
+      <p id="machine-name">Check-Weigher System</p>
+    </div>
+  </div>
+  <div class="hdr-right">
+    <span class="status-badge offline" id="status-badge">OFFLINE</span>
+    <a class="hdr-link" href="/">&#128196; Reports</a>
+  </div>
+</header>
+
+<main>
+
+  <!-- top row: weight + stats -->
+  <div class="top-row">
+
+    <!-- weight card -->
+    <div class="card">
+      <div class="card-title">Live Weight</div>
+      <div class="weight-value idle" id="weight-val">—</div>
+      <div class="weight-unit">grams</div>
+
+      <div class="gauge-wrap">
+        <div class="gauge-bg"></div>
+        <div class="gauge-ok" id="gauge-ok"></div>
+        <div class="gauge-needle idle" id="gauge-needle"></div>
+      </div>
+      <div class="gauge-labels">
+        <span id="gauge-low">—</span>
+        <span id="gauge-high">—</span>
+      </div>
+      <div class="target-line">Target: <strong id="target-val">—</strong> g</div>
+    </div>
+
+    <!-- stats card -->
+    <div class="card">
+      <div class="card-title">Batch Statistics</div>
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="num" id="stat-total">0</div>
+          <div class="lbl">Total</div>
+        </div>
+        <div class="stat-box">
+          <div class="num accept" id="stat-accept">0</div>
+          <div class="lbl">Accept</div>
+        </div>
+        <div class="stat-box">
+          <div class="num reject" id="stat-reject">0</div>
+          <div class="lbl">Reject</div>
+        </div>
+        <div class="stat-box">
+          <div class="num" id="stat-rate">—</div>
+          <div class="lbl">Pass %</div>
+          <div class="pass-rate-bar"><div class="pass-rate-fill" id="rate-bar" style="width:0%"></div></div>
+        </div>
+      </div>
+
+      <!-- batch info -->
+      <div class="card-title" style="margin-top:14px">Batch Info</div>
+      <div class="info-grid">
+        <div class="info-item"><div class="lbl">Product</div><div class="val" id="i-product">—</div></div>
+        <div class="info-item"><div class="lbl">Batch No</div><div class="val" id="i-batch">—</div></div>
+        <div class="info-item"><div class="lbl">Pallet</div><div class="val" id="i-pallet">—</div></div>
+        <div class="info-item"><div class="lbl">Lot No</div><div class="val" id="i-lot">—</div></div>
+        <div class="info-item"><div class="lbl">Operator</div><div class="val" id="i-operator">—</div></div>
+        <div class="info-item"><div class="lbl">Machine</div><div class="val" id="i-machine">—</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- recent items -->
+  <div class="card">
+    <div class="card-title">Recent Items</div>
+    <div id="items-wrap">
+      <div class="empty-msg" id="empty-msg">Waiting for items…</div>
+      <table class="items-table" id="items-table" style="display:none">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Time</th>
+            <th>Read Weight</th>
+            <th>Target</th>
+            <th>Status</th>
+            <th>Barcode</th>
+            <th>Pallet</th>
+          </tr>
+        </thead>
+        <tbody id="items-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  const MAX_ROWS = 30;
+  let recentItems = [];
+
+  /* ── element refs ── */
+  const elDot      = document.getElementById('plc-dot');
+  const elBadge    = document.getElementById('status-badge');
+  const elMachine  = document.getElementById('machine-name');
+  const elWeight   = document.getElementById('weight-val');
+  const elTarget   = document.getElementById('target-val');
+  const elNeedle   = document.getElementById('gauge-needle');
+  const elOk       = document.getElementById('gauge-ok');
+  const elGaugeLow = document.getElementById('gauge-low');
+  const elGaugeHi  = document.getElementById('gauge-high');
+  const elTotal    = document.getElementById('stat-total');
+  const elAccept   = document.getElementById('stat-accept');
+  const elReject   = document.getElementById('stat-reject');
+  const elRate     = document.getElementById('stat-rate');
+  const elRateBar  = document.getElementById('rate-bar');
+  const elProduct  = document.getElementById('i-product');
+  const elBatch    = document.getElementById('i-batch');
+  const elPallet   = document.getElementById('i-pallet');
+  const elLot      = document.getElementById('i-lot');
+  const elOperator = document.getElementById('i-operator');
+  const elIBadge   = document.getElementById('i-machine');
+  const elEmpty    = document.getElementById('empty-msg');
+  const elTable    = document.getElementById('items-table');
+  const elBody     = document.getElementById('items-body');
+
+  function pad(n, w) { return String(n).padStart(w, '0'); }
+
+  function fmtWeight(w) {
+    if (w === null || w === undefined || isNaN(w)) return '—';
+    return parseFloat(w).toFixed(3);
+  }
+
+  function statusClass(s) {
+    if (!s) return 'idle';
+    const u = s.toUpperCase();
+    if (u === 'ACCEPT') return 'accept';
+    if (u === 'RUNNING') return 'accept';
+    return 'reject';
+  }
+
+  function updateGauge(weight, target, lower, upper) {
+    const w = parseFloat(weight) || 0;
+    const lo = parseFloat(lower)  || 0;
+    const hi = parseFloat(upper)  || 0;
+    const tg = parseFloat(target) || 0;
+
+    elTarget.textContent = tg ? tg.toFixed(0) : '—';
+
+    if (!lo || !hi || lo >= hi) {
+      elNeedle.style.left = '50%';
+      elOk.style.left = '10%'; elOk.style.width = '80%';
+      elGaugeLow.textContent = '—'; elGaugeHi.textContent = '—';
+      return;
+    }
+
+    const margin = (hi - lo) * 0.4;
+    const rMin = lo - margin, rMax = hi + margin, rng = rMax - rMin;
+
+    const loPct  = ((lo - rMin) / rng) * 100;
+    const hiPct  = ((hi - rMin) / rng) * 100;
+    const wPct   = Math.max(1, Math.min(99, ((w  - rMin) / rng) * 100));
+
+    elOk.style.left  = loPct + '%';
+    elOk.style.width = (hiPct - loPct) + '%';
+    elNeedle.style.left = wPct + '%';
+
+    elGaugeLow.textContent = lo.toFixed(0) + ' g';
+    elGaugeHi.textContent  = hi.toFixed(0) + ' g';
+  }
+
+  function applyState(s) {
+    const connected = s.plc_connected;
+    const running   = s.running;
+    const status    = (s.status || 'OFFLINE').toUpperCase();
+
+    /* PLC dot */
+    elDot.className = 'plc-dot ' + (connected ? 'online' : 'offline');
+
+    /* status badge */
+    elBadge.textContent = status;
+    elBadge.className   = 'status-badge ' +
+      (status === 'RUNNING' ? 'running' : status === 'IDLE' ? 'idle' : 'offline');
+
+    /* weight */
+    const w  = parseFloat(s.weight)  || 0;
+    const lo = parseFloat(s.lower_limit) || 0;
+    const hi = parseFloat(s.upper_limit) || 0;
+    const inRange = lo && hi && w >= lo && w <= hi;
+
+    if (w > 0.1) {
+      elWeight.textContent = fmtWeight(w);
+      elWeight.className   = 'weight-value ' + (lo && hi ? (inRange ? 'accept' : 'reject') : 'idle');
+      elNeedle.className   = 'gauge-needle '  + (lo && hi ? (inRange ? 'accept' : 'reject') : '');
+    } else {
+      elWeight.textContent = '—';
+      elWeight.className   = 'weight-value idle';
+    }
+    updateGauge(w, s.target, lo, hi);
+
+    /* stats */
+    const total  = s.total  || 0;
+    const accept = s.accept || 0;
+    const reject = s.reject || 0;
+    const rate   = total > 0 ? (accept / total * 100) : 0;
+    elTotal.textContent  = total;
+    elAccept.textContent = accept;
+    elReject.textContent = reject;
+    elRate.textContent   = total > 0 ? rate.toFixed(1) + '%' : '—';
+    elRateBar.style.width = rate + '%';
+
+    /* batch info */
+    const machine = s.machine || 'CW-2400';
+    elMachine.textContent  = machine;
+    elProduct.textContent  = s.product_name  || '—';
+    elBatch.textContent    = s.batch_no      ? pad(s.batch_no, 6) : '—';
+    elPallet.textContent   = s.pallet_no     ? pad(s.pallet_no, 6) : '—';
+    elLot.textContent      = s.lot_no        ? pad(s.lot_no, 6) : '—';
+    elOperator.textContent = s.operator_id   || '—';
+    elIBadge.textContent   = machine;
+  }
+
+  function addItemRow(ev, flash) {
+    const status = (ev.status || '').toUpperCase();
+    const ok     = status === 'ACCEPT';
+    const dt     = (ev.datetime || '').replace(/\s+/, ' ');
+    const timePart = dt.split(' ').pop() || '—';
+
+    const row = {
+      item_no : ev.item_no,
+      time    : timePart,
+      weight  : ev.read_weight || fmtWeight(ev.weight),
+      target  : ev.product_weight || '—',
+      status  : status,
+      barcode : ev.barcode || '—',
+      pallet  : ev.pallet_no ? pad(ev.pallet_no, 6) : '—',
+    };
+    recentItems.unshift(row);
+    if (recentItems.length > MAX_ROWS) recentItems.pop();
+    renderTable(flash ? 0 : -1);
+  }
+
+  function renderTable(flashIdx) {
+    if (!recentItems.length) {
+      elEmpty.style.display = '';
+      elTable.style.display = 'none';
+      return;
+    }
+    elEmpty.style.display = 'none';
+    elTable.style.display = '';
+    elBody.innerHTML = '';
+    recentItems.forEach((r, i) => {
+      const ok  = r.status === 'ACCEPT';
+      const tr  = document.createElement('tr');
+      if (i === flashIdx) tr.className = 'new-row';
+      tr.innerHTML =
+        '<td><strong>' + r.item_no + '</strong></td>' +
+        '<td>' + r.time + '</td>' +
+        '<td><strong>' + r.weight + ' g</strong></td>' +
+        '<td>' + r.target + ' g</td>' +
+        '<td><span class="pill ' + (ok ? 'accept' : 'reject') + '">' + r.status + '</span></td>' +
+        '<td style="font-size:.75rem;color:#555">' + r.barcode + '</td>' +
+        '<td>' + r.pallet + '</td>';
+      elBody.appendChild(tr);
+    });
+  }
+
+  /* ── poll weight every 500ms ── */
+  async function pollWeight() {
+    try {
+      const r = await fetch('/api/live');
+      const s = await r.json();
+      applyState(s);
+    } catch (_) {}
+  }
+  pollWeight();
+  setInterval(pollWeight, 500);
+
+  /* ── SSE for item events ── */
+  function connectEvents() {
+    const src = new EventSource('/live-events');
+
+    src.addEventListener('item', ev => {
+      try {
+        const s   = JSON.parse(ev.data);
+        applyState(s);
+        const iev = s.item_event;
+        if (iev) addItemRow(iev, true);
+      } catch (_) {}
+    });
+
+    src.addEventListener('status', ev => {
+      try { applyState(JSON.parse(ev.data)); } catch (_) {}
+    });
+
+    src.onerror = () => {
+      elDot.className   = 'plc-dot offline';
+      elBadge.textContent = 'OFFLINE';
+      elBadge.className   = 'status-badge offline';
+    };
+  }
+  connectEvents();
+</script>
+
+</body>
+</html>
