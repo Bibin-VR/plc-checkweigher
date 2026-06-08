@@ -1,0 +1,31 @@
+{
+  "name": "plc-checkweigher",
+  "version": "1.0.0",
+  "description": "One-command installer for the PLC Check-Weigher system on Raspberry Pi (PREEMPT_RT kernel, Python stack, WiFi, SMB, systemd RT services)",
+  "bin": {
+    "plc-checkweigher": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "setup.sh"
+  ],
+  "keywords": [
+    "plc",
+    "checkweigher",
+    "raspberry-pi",
+    "installer",
+    "preempt-rt",
+    "real-time",
+    "mitsubishi",
+    "iot"
+  ],
+  "author": "Bibin-VR",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Bibin-VR/plc-checkweigher.git"
+  }
+}

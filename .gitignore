@@ -4,3 +4,6 @@ __pycache__/
 .env
 *.csv
 ProgPou.csv
+node_modules/
+*.log
+package-lock.json
