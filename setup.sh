@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  PLC Check-Weigher — Full Stack Installer  v1.2
+#  PLC Check-Weigher — Full Stack Installer  v1.3
 # =============================================================================
 #  Run on any fresh Raspberry Pi:
 #
@@ -16,8 +16,9 @@
 #    7.  SMB      — enter host IP, share name, credentials  → smb_config.py
 #    8.  NetworkManager-wait-online
 #    9.  systemd services (plc_watcher + plc_web)
-#   10.  PREEMPT_RT kernel  ← installed last so only one reboot is needed
-#   11.  REBOOT
+#   10.  Boot logo — Plymouth theme with logo.png + "SAI SAMARTH ENGG"
+#   11.  PREEMPT_RT kernel  ← installed last so only one reboot is needed
+#   12.  REBOOT
 # =============================================================================
 
 set -euo pipefail
@@ -364,7 +365,86 @@ EOF
     chown "${PI_USER}:${PI_USER}" "${INSTALL_DIR}/plc_watcher.service"
 }
 
-# ── 9. RT kernel — installed LAST so only one reboot is needed ────────────────
+# ── 10. Boot splash — Plymouth theme with logo + company name ────────────────
+setup_boot_logo() {
+    step "Boot splash screen ..."
+
+    # Install Plymouth + font support (safe to run even if already installed)
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        plymouth plymouth-themes fonts-freefont-ttf
+
+    THEME_DIR="/usr/share/plymouth/themes/saismruth"
+    mkdir -p "${THEME_DIR}"
+
+    # ── Logo: resize assets/logo.png to 256×256 and copy into theme ──────────
+    LOGO_SRC="${INSTALL_DIR}/assets/logo.png"
+    if [[ -f "${LOGO_SRC}" ]]; then
+        "${VENV_DIR}/bin/python3" - << PYEOF
+from PIL import Image
+img = Image.open("${LOGO_SRC}").convert("RGBA")
+img.thumbnail((256, 256), Image.LANCZOS)
+img.save("${THEME_DIR}/logo.png", "PNG")
+PYEOF
+        ok "Logo installed (256×256)  →  ${THEME_DIR}/logo.png"
+    else
+        warn "assets/logo.png not found — splash will show text only"
+    fi
+
+    # ── Theme config file ─────────────────────────────────────────────────────
+    cat > "${THEME_DIR}/saismruth.plymouth" << 'EOF'
+[Plymouth Theme]
+Name=SAI SAMARTH ENGG
+Description=PLC Check-Weigher Boot Screen — SAI SAMARTH ENGG
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/saismruth
+ScriptFile=/usr/share/plymouth/themes/saismruth/saismruth.script
+EOF
+
+    # ── Plymouth script: logo centred, text below ─────────────────────────────
+    cat > "${THEME_DIR}/saismruth.script" << 'EOF'
+# ── SAI SAMARTH ENGG — Boot Splash ────────────────────────────────────────────
+Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
+Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
+
+screen_w = Window.GetWidth();
+screen_h = Window.GetHeight();
+
+# ── Logo (centred, slightly above middle to leave room for text) ──────────────
+logo_img = Image("logo.png");
+logo_w   = logo_img.GetWidth();
+logo_h   = logo_img.GetHeight();
+logo_x   = (screen_w - logo_w) / 2;
+logo_y   = (screen_h - logo_h) / 2 - 40;
+
+logo_sprite = Sprite(logo_img);
+logo_sprite.SetPosition(logo_x, logo_y, 0);
+
+# ── Company name centred below logo ───────────────────────────────────────────
+text_img = Image.Text("SAI SAMARTH ENGG", 1.0, 1.0, 1.0, 1.0, "Sans Bold 20");
+text_w   = text_img.GetWidth();
+text_x   = (screen_w - text_w) / 2;
+text_y   = logo_y + logo_h + 22;
+
+text_sprite = Sprite(text_img);
+text_sprite.SetPosition(text_x, text_y, 1);
+EOF
+
+    # ── Activate theme ────────────────────────────────────────────────────────
+    plymouth-set-default-theme saismruth
+    ok "Plymouth theme set  →  saismruth"
+
+    # Rebuild current initramfs so Plymouth is included.
+    # The RT kernel's post-install will create its own initramfs with Plymouth
+    # already installed, so initramfs8-rt will also carry the theme.
+    echo -n "  Rebuilding initramfs (may take ~30 s) ..."
+    update-initramfs -u > /tmp/initramfs.log 2>&1 \
+        && echo "" && ok "initramfs rebuilt" \
+        || { echo ""; warn "initramfs warnings — see /tmp/initramfs.log"; }
+}
+
+# ── 11. RT kernel — installed LAST so only one reboot is needed ───────────────
 install_rt_kernel() {
     step "PREEMPT_RT kernel  (final step before reboot) ..."
 
@@ -462,8 +542,9 @@ main() {
     setup_smb                 # 6  — interactive SMB config → smb_config.py
     setup_network_online      # 7
     install_services          # 8
-    install_rt_kernel         # 9  — LAST, so only one reboot needed
-    do_reboot                 # 10 — single reboot applies everything
+    setup_boot_logo           # 9  — Plymouth: logo + "SAI SAMARTH ENGG"
+    install_rt_kernel         # 10 — LAST, so only one reboot needed
+    do_reboot                 # 11 — single reboot applies everything
 }
 
 main "$@"
