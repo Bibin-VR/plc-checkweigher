@@ -7,3 +7,4 @@ ProgPou.csv
 node_modules/
 *.log
 package-lock.json
+smb_config.py

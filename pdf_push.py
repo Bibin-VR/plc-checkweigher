@@ -56,11 +56,18 @@ EMAIL_BODY     = "Please find the latest check-weigher production report attache
 #   sudo apt install samba-client
 
 SMB_ENABLED  = True
-SMB_HOST     = "192.168.0.140"   # Mac IP (or change to VM IP if using bridged mode)
-SMB_SHARE    = "Reports"                  # share name (what you named it when sharing)
-SMB_USERNAME = "plcreport"       # Mac username (System Settings → Users & Groups)
-SMB_PASSWORD = "plcreport"   # Mac login password
-SMB_SUBDIR   = ""              # subfolder inside the share, e.g. "PLC" (optional)
+SMB_HOST     = ""        # set during installation via: npx plc-checkweigher
+SMB_SHARE    = ""        # set during installation
+SMB_USERNAME = ""        # set during installation
+SMB_PASSWORD = ""        # set during installation
+SMB_SUBDIR   = ""        # optional subfolder inside the share, e.g. "PLC"
+
+# Per-deployment overrides — written by setup.sh, never committed to git.
+# Keeps real credentials out of version control.
+try:
+    from smb_config import *  # noqa: F401,F403
+except ImportError:
+    pass
 
 
 # ── HTTP push (requires pdf_receiver.py on the target) ───────────────────────
