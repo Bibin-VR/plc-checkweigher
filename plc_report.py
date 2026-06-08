@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PLC Production Report — PDF builder.
+PLC Production Report — PDF builder  (v2)
 
 Can be run standalone:   python3 plc_report.py
 Or imported by reader:   from plc_report import build_pdf, PDF_DIR
@@ -177,16 +177,6 @@ def build_pdf(batch: dict, rows: list, path: str,
     accept_cnt  = sum(1 for r in rows if str(r.get('status', '')).upper() == 'ACCEPT')
     reject_cnt  = total_items - accept_cnt
     pass_rate   = f"{accept_cnt / total_items * 100:.1f}%" if total_items else "—"
-    weights = []
-    for r in rows:
-        try:
-            w = float(r.get('read_weight', ''))
-            if w > 0:
-                weights.append(w)
-        except (ValueError, TypeError):
-            pass
-    avg_w = sum(weights) / len(weights) if weights else 0.0
-    std_w = (sum((w - avg_w) ** 2 for w in weights) / len(weights)) ** 0.5 if len(weights) > 1 else 0.0
 
     W, _ = A4
     MG = 15 * mm
@@ -265,28 +255,24 @@ def build_pdf(batch: dict, rows: list, path: str,
 
     # ── Batch summary statistics ───────────────────────────────────────────────
     S_STAT_H = S("stat_h", 7, bold=True, align=TA_CENTER)
-    S_STAT_V = S("stat_v", 9, bold=True, align=TA_CENTER)
-    S_STAT_L = S("stat_l", 7, align=TA_CENTER)
+    S_STAT_V = S("stat_v", 10, bold=True, align=TA_CENTER)
 
     stat_hdr = [Paragraph(h, S_STAT_H) for h in
-                ["TOTAL", "ACCEPT", "REJECT", "PASS RATE", "AVG WEIGHT", "STD DEV"]]
+                ["TOTAL ITEMS", "ACCEPTED", "REJECTED", "PASS RATE"]]
     stat_val = [
-        Paragraph(str(total_items),            S_STAT_V),
-        Paragraph(str(accept_cnt),             S_STAT_V),
-        Paragraph(str(reject_cnt),             S_STAT_V),
-        Paragraph(pass_rate,                   S_STAT_V),
-        Paragraph(f"{avg_w:.2f} g" if avg_w else "—", S_STAT_V),
-        Paragraph(f"±{std_w:.2f} g" if std_w else "—", S_STAT_V),
+        Paragraph(str(total_items), S_STAT_V),
+        Paragraph(str(accept_cnt),  S_STAT_V),
+        Paragraph(str(reject_cnt),  S_STAT_V),
+        Paragraph(pass_rate,        S_STAT_V),
     ]
-    sw = UW / 6
-    stat_tbl = Table([stat_hdr, stat_val], colWidths=[sw] * 6)
+    sw = UW / 4
+    stat_tbl = Table([stat_hdr, stat_val], colWidths=[sw] * 4)
     stat_tbl.setStyle(TableStyle([
         ("GRID",          (0, 0), (-1, -1), 0.5, C_GRID),
         ("BACKGROUND",    (0, 0), (-1,  0), colors.HexColor("#f0f0f0")),
         ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",    (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        # Highlight reject count red if any rejects
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         *([("TEXTCOLOR", (2, 1), (2, 1), colors.red)] if reject_cnt > 0 else []),
     ]))
     story.append(stat_tbl)
