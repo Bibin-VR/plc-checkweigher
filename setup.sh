@@ -16,9 +16,10 @@
 #    7.  SMB      — enter host IP, share name, credentials  → smb_config.py
 #    8.  NetworkManager-wait-online
 #    9.  systemd services (plc_watcher + plc_web)
-#   10.  Boot logo — Plymouth theme with logo.png + "SAI SAMARTH ENGG"
-#   11.  PREEMPT_RT kernel  ← installed last so only one reboot is needed
-#   12.  REBOOT
+#   10.  Boot logo  — Plymouth theme with logo.png + "SAI SAMARTH ENGG"
+#   11.  Display    — LightDM priority, CPU isolation, utmpx, GPU memory
+#   12.  PREEMPT_RT kernel  ← installed last so only one reboot is needed
+#   13.  REBOOT
 # =============================================================================
 
 set -euo pipefail
@@ -444,7 +445,64 @@ EOF
         || { echo ""; warn "initramfs warnings — see /tmp/initramfs.log"; }
 }
 
-# ── 11. RT kernel — installed LAST so only one reboot is needed ───────────────
+# ── 11. Display — LightDM priority, CPU isolation, utmpx, GPU memory ────────
+setup_display() {
+    step "Display priority & LightDM ..."
+
+    # Install display stack if not present
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        lightdm labwc pi-greeter xserver-xorg 2>/dev/null || true
+
+    # ── Remove network dependency from LightDM ───────────────────────────────
+    # Display manager must not wait for network — it is independent of PLC services.
+    mkdir -p /etc/systemd/system/lightdm.service.d/
+    rm -f /etc/systemd/system/lightdm.service.d/wait-for-network.conf
+
+    cat > /etc/systemd/system/lightdm.service.d/display-priority.conf << 'EOF'
+[Unit]
+# Start after hardware udev settles (HDMI/DSI detected) — not after network.
+After=systemd-udev-settle.service local-fs.target acpid.socket dbus.service
+Wants=systemd-udev-settle.service
+
+[Service]
+# Generous restart policy — display should always recover.
+StartLimitBurst=20
+StartLimitIntervalSec=120
+Restart=on-failure
+RestartSec=3
+
+# CPU cores 0-2 only — core 3 is reserved for SCHED_FIFO PLC process.
+CPUAffinity=0 1 2
+
+# Elevated priority — display stays responsive under PLC RT workload.
+Nice=-5
+
+LimitNOFILE=65536
+EOF
+    ok "LightDM: CPUAffinity=0-2, Nice=-5, network dep removed"
+
+    # ── Fix utmpx — PAM needs /run/utmp to track sessions ───────────────────
+    cat > /etc/tmpfiles.d/utmp-fix.conf << 'EOF'
+f  /run/utmp  0664  root  utmp  -
+EOF
+    systemd-tmpfiles --create /etc/tmpfiles.d/utmp-fix.conf 2>/dev/null || true
+    ok "/run/utmp fixed (utmpx PAM session tracking)"
+
+    # ── GPU memory — 128 MB: enough for 1080p desktop and HMI use ───────────
+    sed -i '/^gpu_mem=/d' "${BOOT_FW}/config.txt"
+    if grep -q "### PLC-RT-BLOCK-START ###" "${BOOT_FW}/config.txt"; then
+        sed -i '/### PLC-RT-BLOCK-START ###/i gpu_mem=128' "${BOOT_FW}/config.txt"
+    else
+        echo "gpu_mem=128" >> "${BOOT_FW}/config.txt"
+    fi
+    ok "gpu_mem=128 set in config.txt (128 MB VRAM)"
+
+    systemctl daemon-reload
+    systemctl enable lightdm.service 2>/dev/null || true
+    ok "LightDM enabled — starts on every boot when display is connected"
+}
+
+# ── 12. RT kernel — installed LAST so only one reboot is needed ───────────────
 install_rt_kernel() {
     step "PREEMPT_RT kernel  (final step before reboot) ..."
 
@@ -543,8 +601,9 @@ main() {
     setup_network_online      # 7
     install_services          # 8
     setup_boot_logo           # 9  — Plymouth: logo + "SAI SAMARTH ENGG"
-    install_rt_kernel         # 10 — LAST, so only one reboot needed
-    do_reboot                 # 11 — single reboot applies everything
+    setup_display             # 10 — LightDM priority, CPU isolation, utmpx, GPU
+    install_rt_kernel         # 11 — LAST, so only one reboot needed
+    do_reboot                 # 12 — single reboot applies everything
 }
 
 main "$@"
