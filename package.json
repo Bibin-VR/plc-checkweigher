@@ -7,7 +7,8 @@
   },
   "files": [
     "bin/",
-    "setup.sh"
+    "setup.sh",
+    "assets/"
   ],
   "keywords": [
     "plc",
