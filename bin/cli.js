@@ -47,10 +47,9 @@ function dotRows(word) {
 }
 
 // ── TØVEX-SYSTEMS access banner ───────────────────────────────────────────────
-function showAccessDenied() {
-  const INNER = 52;   // characters between the ║ borders
+function buildBanner() {
+  const INNER = 52;
 
-  // Center a plain-text string inside INNER
   function cen(str) {
     const len  = str.length;
     const lpad = Math.floor((INNER - len) / 2);
@@ -67,29 +66,45 @@ function showAccessDenied() {
 
   const tRow = dotRows('TØVEX');
   const sRow = dotRows('SYSTEMS');
+  const sep  = Array.from({ length: sRow[0].length }, (_, i) => i % 2 ? ' ' : '·').join('');
 
-  // Dot-separator exactly as wide as SYSTEMS
-  const sep = Array.from({ length: sRow[0].length }, (_, i) => i % 2 ? ' ' : '·').join('');
+  const lines = [
+    '',
+    `${B}╔${bar}╗${NC}`,
+    blank,
+    ...tRow.map(r => boxRow(r, B)),
+    blank,
+    boxRow(sep, D),
+    blank,
+    ...sRow.map(r => boxRow(r, B)),
+    blank,
+    `${B}╚${bar}╝${NC}`,
+    '',
+    `  ${R}⚠  Please contact administrator for access${NC}`,
+    '',
+  ];
+  return lines.join('\n');
+}
 
-  // ── Print box ─────────────────────────────────────────────────────────────
-  console.log('');
-  console.log(`${B}╔${bar}╗${NC}`);
-  console.log(blank);
-  for (const r of tRow)  console.log(boxRow(r, B));
-  console.log(blank);
-  console.log(boxRow(sep, D));
-  console.log(blank);
-  for (const r of sRow)  console.log(boxRow(r, B));
-  console.log(blank);
-  console.log(`${B}╚${bar}╝${NC}`);
+function showAccessDenied() {
+  const banner = buildBanner();
+  const isPostinstall = process.env.npm_lifecycle_event === 'postinstall';
 
-  // ── Access-denied message ─────────────────────────────────────────────────
-  console.log('');
-  console.log(`  ${R}⚠  Please contact administrator for access${NC}`);
-  console.log('');
+  if (isPostinstall) {
+    // npm 7+ pipes away stdout/stderr of dependency lifecycle scripts.
+    // Write directly to /dev/tty so it reaches the terminal regardless.
+    try {
+      const fd = fs.openSync('/dev/tty', 'w');
+      fs.writeSync(fd, banner + '\n');
+      fs.closeSync(fd);
+    } catch (_) {
+      // No real terminal attached (CI, pipe) — silently skip.
+    }
+    process.exit(0);
+  }
 
-  // Exit 0 when invoked by npm postinstall so the install is not marked failed
-  process.exit(process.env.npm_lifecycle_event === 'postinstall' ? 0 : 1);
+  console.log(banner);
+  process.exit(1);
 }
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
