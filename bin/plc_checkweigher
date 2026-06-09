@@ -539,6 +539,202 @@ smb-config)
     ;;
 
 # ─────────────────────────────────────────────────────────────────────────────
+# UNINSTALL — remove everything setup.sh installed
+# ─────────────────────────────────────────────────────────────────────────────
+uninstall)
+    PI_USER="${PI_USER:-pi}"
+    HOME_DIR="/home/${PI_USER}"
+    VENV_DIR="${HOME_DIR}/plc_env"
+    REPORTS_DIR="${HOME_DIR}/reports"
+    BOOT_FW="/boot/firmware"
+
+    echo ""
+    echo -e "${R}  ╔══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${R}  ║              PLC CHECK-WEIGHER UNINSTALLER               ║${NC}"
+    echo -e "${R}  ╚══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  This will permanently remove:"
+    echo ""
+    echo -e "  ${R}✗${NC}  systemd services    plc_watcher  plc_web"
+    echo -e "  ${R}✗${NC}  project code        ${INSTALL_DIR}"
+    echo -e "  ${R}✗${NC}  Python venv         ${VENV_DIR}"
+    echo -e "  ${R}✗${NC}  CLI tool            /usr/local/bin/plc_checkweigher"
+    echo -e "  ${R}✗${NC}  Plymouth theme      saismruth (reverts to default)"
+    echo -e "  ${R}✗${NC}  RT kernel config    (reverts /boot/firmware/config.txt)"
+    echo -e "  ${R}✗${NC}  LightDM drop-in     /etc/systemd/system/lightdm.service.d/"
+    echo -e "  ${R}✗${NC}  NetworkManager cfg  /etc/systemd/system/NetworkManager-wait-online.service.d/"
+    echo -e "  ${R}✗${NC}  Hotspot connection  plc-hotspot (nmcli)"
+    echo -e "  ${Y}!${NC}  reports folder      ${REPORTS_DIR}  (you will be asked)"
+    echo ""
+    echo -e "  ${D}System packages (git, python3-venv, samba-client) are NOT removed${NC}"
+    echo -e "  ${D}as they may be used by other software on this system.${NC}"
+    echo ""
+    hr
+    echo ""
+
+    read -r -p "  Type  YES  to confirm full uninstall: " CONFIRM </dev/tty
+    [[ "$CONFIRM" == "YES" ]] || { echo "  Aborted."; exit 0; }
+
+    echo ""
+    read -r -p "  Keep report PDFs in ${REPORTS_DIR}? [Y/n]: " KEEP_REPORTS </dev/tty
+    KEEP_REPORTS="${KEEP_REPORTS:-Y}"
+
+    echo ""
+    need_sudo
+
+    # ── 1. Stop and disable services ─────────────────────────────────────────
+    banner "Stopping services"
+    for SVC in plc_watcher plc_web; do
+        if systemctl is-active --quiet "$SVC" 2>/dev/null; then
+            sudo systemctl stop "$SVC" 2>/dev/null && ok "Stopped  $SVC" || warn "Could not stop $SVC"
+        fi
+        if systemctl is-enabled --quiet "$SVC" 2>/dev/null; then
+            sudo systemctl disable "$SVC" 2>/dev/null && ok "Disabled $SVC" || true
+        fi
+    done
+    sudo rm -f /etc/systemd/system/plc_watcher.service \
+               /etc/systemd/system/plc_web.service
+    ok "Service unit files removed"
+
+    # ── 2. LightDM drop-in ───────────────────────────────────────────────────
+    sudo rm -f /etc/systemd/system/lightdm.service.d/display-priority.conf
+    ok "LightDM drop-in removed"
+    # Re-enable LightDM without our custom priority settings
+    sudo systemctl reenable lightdm 2>/dev/null || true
+
+    # ── 3. NetworkManager-wait-online override ───────────────────────────────
+    sudo rm -f /etc/systemd/system/NetworkManager-wait-online.service.d/timeout.conf
+    ok "NetworkManager wait-online override removed"
+
+    # ── 4. utmpx tmpfiles ────────────────────────────────────────────────────
+    sudo rm -f /etc/tmpfiles.d/utmp-fix.conf
+    ok "utmpx tmpfiles config removed"
+
+    # ── 5. Plymouth theme ────────────────────────────────────────────────────
+    banner "Reverting Plymouth boot theme"
+    THEME_DIR="/usr/share/plymouth/themes/saismruth"
+    if [[ -d "$THEME_DIR" ]]; then
+        sudo rm -rf "$THEME_DIR"
+        ok "Plymouth theme 'saismruth' removed"
+    fi
+    # Restore default theme
+    DEFAULT_THEME=$(sudo plymouth-set-default-theme --list 2>/dev/null | grep -E "^pix$|^bgrt$|^spinner$" | head -1 || echo "")
+    if [[ -n "$DEFAULT_THEME" ]]; then
+        sudo plymouth-set-default-theme "$DEFAULT_THEME" 2>/dev/null && ok "Plymouth reverted to '${DEFAULT_THEME}'"
+    else
+        sudo plymouth-set-default-theme --reset 2>/dev/null && ok "Plymouth theme reset to default" || true
+    fi
+    echo -n "  Rebuilding initramfs ..."
+    sudo update-initramfs -u > /tmp/uninstall_initramfs.log 2>&1 \
+        && echo "" && ok "initramfs rebuilt" \
+        || { echo ""; warn "initramfs rebuild had warnings — see /tmp/uninstall_initramfs.log"; }
+
+    # ── 6. RT kernel — revert config.txt ────────────────────────────────────
+    banner "Reverting RT kernel config"
+    if [[ -f "${BOOT_FW}/config.txt" ]]; then
+        # Remove the PLC-RT-BLOCK section (restores stock kernel on next boot)
+        sudo sed -i '/### PLC-RT-BLOCK-START ###/,/### PLC-RT-BLOCK-END ###/d' \
+            "${BOOT_FW}/config.txt"
+        ok "PLC-RT-BLOCK removed from config.txt — stock kernel will boot"
+
+        # Remove gpu_mem=128 if we set it
+        sudo sed -i '/^gpu_mem=128$/d' "${BOOT_FW}/config.txt"
+        ok "gpu_mem=128 removed from config.txt"
+
+        # Remove leftover RT kernel/initramfs files
+        sudo rm -f "${BOOT_FW}/kernel8-rt.img" "${BOOT_FW}/initramfs8-rt"
+        ok "RT kernel image files removed"
+
+        # Restore stock kernel backup if present
+        if [[ -f "${BOOT_FW}/kernel8-stock.img" ]]; then
+            sudo rm -f "${BOOT_FW}/kernel8-stock.img"
+            ok "Stock kernel backup removed (no longer needed)"
+        fi
+    else
+        warn "config.txt not found at ${BOOT_FW} — skipping kernel revert"
+    fi
+
+    # ── 7. Hotspot nmcli connection ──────────────────────────────────────────
+    banner "Cleaning up network"
+    sudo nmcli connection delete "plc-hotspot" 2>/dev/null \
+        && ok "Hotspot connection removed" || true
+
+    # ── 8. Python venv ───────────────────────────────────────────────────────
+    banner "Removing Python environment"
+    if [[ -d "$VENV_DIR" ]]; then
+        rm -rf "$VENV_DIR"
+        ok "Removed: ${VENV_DIR}"
+    else
+        info "venv not found — already removed"
+    fi
+
+    # ── 9. Reports directory ─────────────────────────────────────────────────
+    if [[ "${KEEP_REPORTS^^}" == "Y" ]]; then
+        info "Reports kept at ${REPORTS_DIR}"
+    else
+        if [[ -d "$REPORTS_DIR" ]]; then
+            rm -rf "$REPORTS_DIR"
+            ok "Removed: ${REPORTS_DIR}"
+        fi
+    fi
+
+    # ── 10. Temp / runtime files ─────────────────────────────────────────────
+    rm -f /tmp/plc_live.json 2>/dev/null || true
+
+    # ── 11. daemon-reload after all unit changes ─────────────────────────────
+    sudo systemctl daemon-reload
+
+    # ── 12. PATH entry in .bashrc ────────────────────────────────────────────
+    BASHRC="${HOME_DIR}/.bashrc"
+    if [[ -f "$BASHRC" ]] && grep -q '\.local/bin' "$BASHRC"; then
+        sed -i '/export PATH.*\.local\/bin/d' "$BASHRC" 2>/dev/null || true
+        ok ".bashrc PATH entry removed"
+    fi
+
+    # ── 13. Remove CLI copies ────────────────────────────────────────────────
+    sudo rm -f /usr/local/bin/plc_checkweigher
+    rm -f "${HOME_DIR}/.local/bin/plc_checkweigher" 2>/dev/null || true
+    ok "CLI binaries removed"
+
+    # ── 14. Remove project directory (last — self-deletes the source) ────────
+    banner "Removing project code"
+    if [[ -d "$INSTALL_DIR" ]]; then
+        rm -rf "$INSTALL_DIR"
+        ok "Removed: ${INSTALL_DIR}"
+    else
+        info "Project directory not found — already removed"
+    fi
+
+    # ── Done ─────────────────────────────────────────────────────────────────
+    echo ""
+    echo -e "${G}"
+    echo "  ╔══════════════════════════════════════════════════════════╗"
+    echo "  ║  Uninstall complete.                                     ║"
+    echo "  ║                                                          ║"
+    echo "  ║  A reboot is needed to fully apply kernel changes.       ║"
+    echo "  ║  After reboot the stock kernel will be active.           ║"
+    echo "  ╚══════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+
+    if [[ "${KEEP_REPORTS^^}" == "Y" ]]; then
+        info "Your PDFs are still at: ${REPORTS_DIR}"
+        info "Remove manually: rm -rf ${REPORTS_DIR}"
+    fi
+
+    echo ""
+    read -r -p "  Reboot now? [Y/n]: " DO_REBOOT </dev/tty
+    DO_REBOOT="${DO_REBOOT:-Y}"
+    if [[ "${DO_REBOOT^^}" == "Y" ]]; then
+        echo ""
+        info "Rebooting ..."
+        sudo reboot
+    else
+        warn "Remember to reboot for kernel changes to take effect."
+        echo ""
+    fi
+    ;;
+
+# ─────────────────────────────────────────────────────────────────────────────
 # HELP
 # ─────────────────────────────────────────────────────────────────────────────
 help|--help|-h)
@@ -570,6 +766,8 @@ help|--help|-h)
     echo "    display on                 Enable display (start LightDM)"
     echo "    display off                Disable display (stop LightDM)"
     echo "    display status             Show display state"
+    echo ""
+    echo -e "  ${R}  uninstall${NC}                   Remove everything setup.sh installed"
     echo ""
     ;;
 
