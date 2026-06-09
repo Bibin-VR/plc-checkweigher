@@ -93,12 +93,17 @@ function showAccessDenied() {
   if (isPostinstall) {
     // npm 7+ pipes away stdout/stderr of dependency lifecycle scripts.
     // Write directly to /dev/tty so it reaches the terminal regardless.
-    try {
-      const fd = fs.openSync('/dev/tty', 'w');
-      fs.writeSync(fd, banner + '\n');
-      fs.closeSync(fd);
-    } catch (_) {
-      // No real terminal attached (CI, pipe) — silently skip.
+    // Skip when invoked by npx — npx installs into ~/.npm/_npx/ before
+    // running the CLI, which would show the banner twice.
+    const isNpx = __dirname.includes('_npx');
+    if (!isNpx) {
+      try {
+        const fd = fs.openSync('/dev/tty', 'w');
+        fs.writeSync(fd, banner + '\n');
+        fs.closeSync(fd);
+      } catch (_) {
+        // No real terminal attached (CI, pipe) — silently skip.
+      }
     }
     process.exit(0);
   }
