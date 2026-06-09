@@ -136,6 +136,21 @@ setup_dirs() {
     ok "${REPORTS_DIR}"
 }
 
+# ── CLI tool — install plc_checkweigher command ───────────────────────────────
+install_cli() {
+    step "CLI tool ..."
+    CLI_SRC="${INSTALL_DIR}/bin/plc_checkweigher"
+    CLI_DEST="/usr/local/bin/plc_checkweigher"
+    if [[ -f "${CLI_SRC}" ]]; then
+        chmod +x "${CLI_SRC}"
+        cp "${CLI_SRC}" "${CLI_DEST}"
+        ok "plc_checkweigher  →  ${CLI_DEST}"
+        ok "Run: plc_checkweigher status   (full system diagnostic)"
+    else
+        warn "bin/plc_checkweigher not found — skipping CLI install"
+    fi
+}
+
 # ── 5. WiFi — scan → pick → password ─────────────────────────────────────────
 setup_wifi() {
     step "WiFi Setup"
@@ -601,10 +616,11 @@ main() {
     setup_repo                # 2
     setup_venv                # 3
     setup_dirs                # 4
-    setup_wifi                # 5  — interactive WiFi picker
-    setup_smb                 # 6  — interactive SMB config → smb_config.py
-    setup_network_online      # 7
-    install_services          # 8
+    install_cli               # 5  — plc_checkweigher status command
+    setup_wifi                # 6  — interactive WiFi picker
+    setup_smb                 # 7  — interactive SMB config → smb_config.py
+    setup_network_online      # 8
+    install_services          # 9
     setup_boot_logo           # 9  — Plymouth: logo + "SAI SAMARTH ENGG"
     setup_display             # 10 — LightDM priority, CPU isolation, utmpx, GPU
     install_rt_kernel         # 11 — LAST, so only one reboot needed

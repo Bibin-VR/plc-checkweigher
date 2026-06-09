@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# plc_checkweigher — CLI wrapper
+# Installed to /usr/local/bin/ by setup.sh
+
+INSTALL_DIR="/home/pi/plc_checkweigher"
+PYTHON="/home/pi/plc_env/bin/python3"
+
+CMD="${1:-help}"
+
+case "$CMD" in
+    status|check|diag)
+        exec "$PYTHON" "$INSTALL_DIR/debugger.py" "$@"
+        ;;
+    logs)
+        exec journalctl -u plc_watcher -u plc_web -f --no-pager
+        ;;
+    restart)
+        sudo systemctl restart plc_watcher plc_web
+        sleep 2
+        systemctl status plc_watcher plc_web --no-pager | grep -E 'Active|PID'
+        ;;
+    start)
+        sudo systemctl start plc_watcher plc_web
+        ;;
+    stop)
+        sudo systemctl stop plc_watcher plc_web
+        ;;
+    push-test)
+        LATEST=$(ls -t /home/pi/reports/*.pdf 2>/dev/null | head -1)
+        if [[ -z "$LATEST" ]]; then
+            echo "No PDFs in /home/pi/reports/ — generating one from PLC..."
+            "$PYTHON" "$INSTALL_DIR/plc_report.py"
+            LATEST=$(ls -t /home/pi/reports/*.pdf 2>/dev/null | head -1)
+        fi
+        echo "Pushing: $LATEST"
+        "$PYTHON" -c "
+from pdf_push import _push_smb, _already_sent
+import os, sys
+path = '$LATEST'
+fname = os.path.basename(path)
+if _already_sent(fname):
+    print(f'  Already in ledger: {fname}')
+    sys.exit(0)
+result = _push_smb(path)
+sys.exit(0 if result else 1)
+"
+        ;;
+    queue)
+        echo "=== Pending queue ==="
+        python3 -m json.tool "$INSTALL_DIR/delivery_queue.json" 2>/dev/null || echo "(empty)"
+        echo ""
+        echo "=== Delivered ledger ==="
+        cat "$INSTALL_DIR/delivery_sent.log" 2>/dev/null || echo "(empty)"
+        ;;
+    *)
+        echo "Usage: plc_checkweigher <command>"
+        echo ""
+        echo "Commands:"
+        echo "  status      Full system diagnostic — services, PLC, SMB, errors, fixes"
+        echo "  logs        Stream live logs from plc_watcher and plc_web"
+        echo "  restart     Restart both services"
+        echo "  start       Start both services"
+        echo "  stop        Stop both services"
+        echo "  push-test   Push latest PDF to SMB target"
+        echo "  queue       Show pending SMB queue and delivery ledger"
+        ;;
+esac
