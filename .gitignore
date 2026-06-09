@@ -8,3 +8,6 @@ node_modules/
 *.log
 package-lock.json
 smb_config.py
+delivery_queue.json
+delivery_queue.json.tmp
+delivery_sent.log
