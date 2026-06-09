@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  PLC Check-Weigher — Full Stack Installer  v1.3
+#  PLC Check-Weigher — Full Stack Installer  v1.4
 # =============================================================================
 #  Run on any fresh Raspberry Pi:
 #
@@ -83,7 +83,7 @@ prompt_secret() {
 
 # ── 0. Pre-flight ─────────────────────────────────────────────────────────────
 preflight() {
-    banner "PLC Check-Weigher Installer  v1.2"
+    banner "PLC Check-Weigher Installer  v1.4"
     [[ "${EUID}" -eq 0 ]]             || die "Run via npx plc-checkweigher (asks for sudo password)"
     [[ "$(uname -m)" == "aarch64" ]]  || die "Requires 64-bit Raspberry Pi (aarch64). Got: $(uname -m)"
     [[ -d "${HOME_DIR}" ]]            || die "Home ${HOME_DIR} not found. Set PI_USER= to override."
@@ -560,17 +560,22 @@ do_reboot() {
     echo ""
     banner "Setup Complete"
     echo ""
-    printf "  ${G}%-32s${NC} %s\n"  "Repo:"                "${INSTALL_DIR}"
-    printf "  ${G}%-32s${NC} %s\n"  "Python venv:"         "${VENV_DIR}"
-    printf "  ${G}%-32s${NC} %s\n"  "Reports output:"      "${REPORTS_DIR}"
-    printf "  ${G}%-32s${NC} %s\n"  "RT kernel:"           "kernel8-rt.img  (active after reboot)"
+    PI_IP="$(hostname -I | awk '{print $1}' 2>/dev/null || echo '<pi-ip>')"
+    printf "  ${G}%-32s${NC} %s\n"  "Repo:"                  "${INSTALL_DIR}"
+    printf "  ${G}%-32s${NC} %s\n"  "Python venv:"           "${VENV_DIR}"
+    printf "  ${G}%-32s${NC} %s\n"  "Reports output:"        "${REPORTS_DIR}"
+    printf "  ${G}%-32s${NC} %s\n"  "SMB config:"            "${INSTALL_DIR}/smb_config.py"
+    printf "  ${G}%-32s${NC} %s\n"  "RT kernel:"             "kernel8-rt.img  (active after reboot)"
     printf "  ${G}%-32s${NC} %s\n"  "Stock kernel fallback:" "kernel8-stock.img"
-    printf "  ${G}%-32s${NC} %s\n"  "Web dashboard (after reboot):" \
-        "http://$(hostname -I | awk '{print $1}' 2>/dev/null || echo '<pi-ip>'):8080"
+    echo ""
+    echo -e "  ${Y}Web interfaces (after reboot):${NC}"
+    printf "  ${C}%-32s${NC} %s\n"  "Report viewer:"         "http://${PI_IP}:8080/"
+    printf "  ${C}%-32s${NC} %s\n"  "Live dashboard:"        "http://${PI_IP}:8080/live"
     echo ""
     echo -e "  ${Y}After reboot:${NC}"
     echo "    journalctl -u plc_watcher -f                    # live logs"
     echo "    sudo chrt -p \$(systemctl show -p MainPID --value plc_watcher)   # verify RT"
+    echo "    cat ${INSTALL_DIR}/procedure.md                 # full setup guide"
     echo ""
 
     echo -e "${G}"

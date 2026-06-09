@@ -148,7 +148,8 @@ def _push_smb(path: str):
         if result.returncode == 0:
             print(f"  [SMB] ✓ {filename}  →  \\\\{SMB_HOST}\\{SMB_SHARE}\\{dest}")
         else:
-            err = (result.stderr or result.stdout).strip().splitlines()[-1]
+            lines = (result.stderr or result.stdout).strip().splitlines()
+            err = lines[-1] if lines else f"exit code {result.returncode}"
             print(f"  [SMB] ✗ {filename}: {err}")
     except FileNotFoundError:
         print("  [SMB] ✗ smbclient not found — run: sudo apt install samba-client")
