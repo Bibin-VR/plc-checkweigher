@@ -905,7 +905,7 @@ fix)
     ;;
 
 # ─────────────────────────────────────────────────────────────────────────────
-# UNINSTALL — remove everything setup.sh installed
+# UNINSTALL — two modes: software-only or full drive wipe
 # ─────────────────────────────────────────────────────────────────────────────
 uninstall)
     PI_USER="${PI_USER:-pi}"
@@ -919,46 +919,83 @@ uninstall)
     echo -e "${R}  ║              PLC CHECK-WEIGHER UNINSTALLER               ║${NC}"
     echo -e "${R}  ╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "  This will permanently remove:"
+    echo -e "  Choose uninstall mode:"
     echo ""
-    echo -e "  ${R}✗${NC}  systemd services    plc_watcher  plc_web"
-    echo -e "  ${R}✗${NC}  project code        ${INSTALL_DIR}"
-    echo -e "  ${R}✗${NC}  Python venv         ${VENV_DIR}"
-    echo -e "  ${R}✗${NC}  CLI tool            /usr/local/bin/plc_checkweigher"
-    echo -e "  ${R}✗${NC}  Plymouth theme      saismruth (reverts to default)"
-    echo -e "  ${R}✗${NC}  RT kernel config    (reverts /boot/firmware/config.txt)"
-    echo -e "  ${R}✗${NC}  LightDM drop-in     /etc/systemd/system/lightdm.service.d/"
-    echo -e "  ${R}✗${NC}  NetworkManager cfg  /etc/systemd/system/NetworkManager-wait-online.service.d/"
-    echo -e "  ${R}✗${NC}  Hotspot connection  plc-hotspot (nmcli)"
-    echo -e "  ${Y}!${NC}  reports folder      ${REPORTS_DIR}  (you will be asked)"
+    echo -e "  ${Y}1)${NC}  ${W}Software only${NC}"
+    echo -e "     ${D}Remove PLC services, code, venv and kernel config.${NC}"
+    echo -e "     ${D}OS, user files and WiFi credentials are kept intact.${NC}"
     echo ""
-    echo -e "  ${D}System packages (git, python3-venv, samba-client) are NOT removed.${NC}"
-    echo ""
-    hr
+    echo -e "  ${R}2)${NC}  ${W}Clean drive${NC}  — prepare for fresh OS flash"
+    echo -e "     ${D}Everything above PLUS all user data and WiFi credentials,${NC}"
+    echo -e "     ${D}then zeros the entire SD card.${NC}"
+    echo -e "     ${R}     ⚠  The Pi will NOT boot after this. Reflash required.${NC}"
     echo ""
 
-    read -r -p "  Type  YES  to confirm full uninstall: " CONFIRM </dev/tty
-    [[ "$CONFIRM" == "YES" ]] || { echo "  Aborted."; exit 0; }
-
+    while true; do
+        read -r -p "  Mode [1 / 2]: " UNINSTALL_MODE </dev/tty
+        [[ "$UNINSTALL_MODE" == "1" || "$UNINSTALL_MODE" == "2" ]] && break
+        echo -e "  ${R}Enter 1 or 2${NC}"
+    done
     echo ""
-    read -r -p "  Keep report PDFs in ${REPORTS_DIR}? [Y/n]: " KEEP_REPORTS </dev/tty
-    KEEP_REPORTS="${KEEP_REPORTS:-Y}"
+
+    # ── Mode-specific confirmation ────────────────────────────────────────────
+    KEEP_REPORTS="Y"
+    if [[ "$UNINSTALL_MODE" == "1" ]]; then
+        hr
+        echo ""
+        echo -e "  ${R}✗${NC}  systemd services    plc_watcher  plc_web"
+        echo -e "  ${R}✗${NC}  project code        ${INSTALL_DIR}"
+        echo -e "  ${R}✗${NC}  Python venv         ${VENV_DIR}"
+        echo -e "  ${R}✗${NC}  CLI tool            plc_checkweigher"
+        echo -e "  ${R}✗${NC}  Plymouth theme      saismruth → default"
+        echo -e "  ${R}✗${NC}  RT kernel config    /boot/firmware/config.txt"
+        echo -e "  ${Y}!${NC}  reports folder      ${REPORTS_DIR}  (you will be asked)"
+        echo ""
+        echo -e "  ${D}System packages (git, python3-venv, samba-client) NOT removed.${NC}"
+        echo ""
+        hr; echo ""
+        read -r -p "  Type  YES  to confirm: " _CONFIRM </dev/tty
+        [[ "$_CONFIRM" == "YES" ]] || { echo "  Aborted."; exit 0; }
+        echo ""
+        read -r -p "  Keep report PDFs in ${REPORTS_DIR}? [Y/n]: " KEEP_REPORTS </dev/tty
+        KEEP_REPORTS="${KEEP_REPORTS:-Y}"
+    else
+        # Detect the drive that holds the root filesystem
+        _ROOT_SRC=$(findmnt -n -o SOURCE / 2>/dev/null || echo "")
+        _ROOT_DEV=$(lsblk -no pkname "$_ROOT_SRC" 2>/dev/null || echo "")
+        _ROOT_DEV_PATH="/dev/${_ROOT_DEV}"
+
+        hr; echo ""
+        echo -e "  ${R}⚠  DESTRUCTIVE — READ CAREFULLY${NC}"
+        echo ""
+        echo -e "  ${R}✗${NC}  All PLC software, services and kernel config"
+        echo -e "  ${R}✗${NC}  All reports, logs and SMB credentials"
+        echo -e "  ${R}✗${NC}  SSH keys, bash history, npm cache, user configs"
+        echo -e "  ${R}✗${NC}  All saved WiFi connections"
+        echo -e "  ${R}✗${NC}  Entire drive zeroed: ${W}${_ROOT_DEV_PATH}${NC}"
+        echo ""
+        echo -e "  ${R}The Pi will become unresponsive during the wipe.${NC}"
+        echo -e "  ${D}Power off after ~2 minutes, then reflash with Raspberry Pi Imager.${NC}"
+        echo ""
+        hr; echo ""
+        read -r -p "  Type  WIPE  to confirm drive wipe: " _CONFIRM </dev/tty
+        [[ "$_CONFIRM" == "WIPE" ]] || { echo "  Aborted."; exit 0; }
+    fi
 
     echo ""
     need_sudo
 
-    # Step counter
-    _US=0; _UT=9
+    # ── Step counter (9 for software-only, 12 for clean drive) ───────────────
+    _UT=$([[ "$UNINSTALL_MODE" == "1" ]] && echo "9" || echo "12")
+    _US=0
     ustep() { _US=$((_US + 1)); spin_start "[${_US}/${_UT}] $*"; }
 
     # ── 1. Stop and disable services ─────────────────────────────────────────
     echo ""
     ustep "Stopping and disabling services"
     for SVC in plc_watcher plc_web; do
-        systemctl is-active --quiet "$SVC" 2>/dev/null \
-            && sudo systemctl stop    "$SVC" 2>/dev/null || true
-        systemctl is-enabled --quiet "$SVC" 2>/dev/null \
-            && sudo systemctl disable "$SVC" 2>/dev/null || true
+        systemctl is-active  --quiet "$SVC" 2>/dev/null && sudo systemctl stop    "$SVC" 2>/dev/null || true
+        systemctl is-enabled --quiet "$SVC" 2>/dev/null && sudo systemctl disable "$SVC" 2>/dev/null || true
     done
     sudo rm -f /etc/systemd/system/plc_watcher.service \
                /etc/systemd/system/plc_web.service
@@ -985,27 +1022,23 @@ uninstall)
     fi
     spin_ok "Reverted to '${DEFAULT_THEME:-default}'"
 
-    # ── 4. Rebuild initramfs (slowest step — keep spinner alive) ─────────────
+    # ── 4. Rebuild initramfs ─────────────────────────────────────────────────
     ustep "Rebuilding initramfs  ${D}(~30 s)${NC}"
     sudo update-initramfs -u > /tmp/uninstall_initramfs.log 2>&1 \
-        && spin_ok \
-        || spin_warn "Warnings — see /tmp/uninstall_initramfs.log"
+        && spin_ok || spin_warn "Warnings — see /tmp/uninstall_initramfs.log"
 
     # ── 5. RT kernel revert ──────────────────────────────────────────────────
     ustep "Reverting RT kernel config"
     if [[ -f "${BOOT_FW}/config.txt" ]]; then
-        sudo sed -i '/### PLC-RT-BLOCK-START ###/,/### PLC-RT-BLOCK-END ###/d' \
-            "${BOOT_FW}/config.txt"
+        sudo sed -i '/### PLC-RT-BLOCK-START ###/,/### PLC-RT-BLOCK-END ###/d' "${BOOT_FW}/config.txt"
         sudo sed -i '/^gpu_mem=128$/d' "${BOOT_FW}/config.txt"
-        sudo rm -f "${BOOT_FW}/kernel8-rt.img" \
-                   "${BOOT_FW}/initramfs8-rt"   \
-                   "${BOOT_FW}/kernel8-stock.img"
-        spin_ok "Stock kernel will boot after reboot"
+        sudo rm -f "${BOOT_FW}/kernel8-rt.img" "${BOOT_FW}/initramfs8-rt" "${BOOT_FW}/kernel8-stock.img"
+        spin_ok "Stock kernel restored"
     else
         spin_warn "config.txt not found — skipped"
     fi
 
-    # ── 6. Hotspot + nmcli cleanup ───────────────────────────────────────────
+    # ── 6. Network cleanup ───────────────────────────────────────────────────
     ustep "Cleaning up network connections"
     sudo nmcli connection delete "plc-hotspot" 2>/dev/null || true
     sudo systemctl daemon-reload
@@ -1013,15 +1046,10 @@ uninstall)
 
     # ── 7. Python venv ───────────────────────────────────────────────────────
     ustep "Removing Python environment"
-    if [[ -d "$VENV_DIR" ]]; then
-        rm -rf "$VENV_DIR"
-        spin_ok "Removed ${VENV_DIR}"
-    else
-        spin_ok "Already gone"
-    fi
+    [[ -d "$VENV_DIR" ]] && rm -rf "$VENV_DIR" && spin_ok "Removed ${VENV_DIR}" || spin_ok "Already gone"
 
-    # ── 8. Reports (optional) + temp files ───────────────────────────────────
-    ustep "Cleaning up runtime files"
+    # ── 8. Runtime files + CLI ───────────────────────────────────────────────
+    ustep "Cleaning up runtime files and CLI"
     rm -f /tmp/plc_live.json 2>/dev/null || true
     BASHRC="${HOME_DIR}/.bashrc"
     [[ -f "$BASHRC" ]] && sed -i '/export PATH.*\.local\/bin/d' "$BASHRC" 2>/dev/null || true
@@ -1032,16 +1060,61 @@ uninstall)
     fi
     spin_ok "CLI and temp files removed"
 
-    # ── 9. Remove project directory (self-deletes last) ───────────────────────
+    # ── 9. Project code ──────────────────────────────────────────────────────
     ustep "Removing project code"
     if [[ -d "$INSTALL_DIR" ]]; then
-        rm -rf "$INSTALL_DIR"
-        spin_ok "Removed ${INSTALL_DIR}"
+        rm -rf "$INSTALL_DIR" && spin_ok "Removed ${INSTALL_DIR}"
     else
         spin_ok "Already gone"
     fi
 
-    # ── Done ─────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # MODE 2 ONLY: wipe all user data then zero the drive
+    # ─────────────────────────────────────────────────────────────────────────
+    if [[ "$UNINSTALL_MODE" == "2" ]]; then
+
+        # ── 10. All WiFi connections ─────────────────────────────────────────
+        ustep "Removing all WiFi connections"
+        nmcli -t -f NAME con show 2>/dev/null | while IFS= read -r _CON; do
+            [[ -n "$_CON" ]] && sudo nmcli connection delete "$_CON" 2>/dev/null || true
+        done
+        spin_ok "All network connections cleared"
+
+        # ── 11. User data ────────────────────────────────────────────────────
+        ustep "Wiping user data"
+        rm -rf "${REPORTS_DIR}"             2>/dev/null || true
+        rm -rf "${HOME_DIR}/.ssh"           2>/dev/null || true
+        rm -f  "${HOME_DIR}/.bash_history"  2>/dev/null || true
+        rm -rf "${HOME_DIR}/.npm"           2>/dev/null || true
+        rm -rf "${HOME_DIR}/.config"        2>/dev/null || true
+        rm -rf "${HOME_DIR}/.cache"         2>/dev/null || true
+        rm -rf "${HOME_DIR}/.local"         2>/dev/null || true
+        spin_ok "User data cleared"
+
+        # ── 12. Zero the drive ───────────────────────────────────────────────
+        ustep "Zeroing drive — ${_ROOT_DEV_PATH}"
+        _spin_kill
+        echo ""
+        echo -e "  ${R}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${R}  Starting drive wipe. The system will become unresponsive.${NC}"
+        echo -e "  ${R}  Power off after 2 minutes and reflash with Pi Imager.${NC}"
+        echo -e "  ${R}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        for _i in 10 9 8 7 6 5 4 3 2 1; do
+            printf "\r  Wiping in %2d s ... (Ctrl-C to abort)  " "$_i"
+            sleep 1
+        done
+        printf '\r\033[K'
+        echo -e "  ${R}Wiping ${_ROOT_DEV_PATH} ...${NC}"
+        echo ""
+        sudo dd if=/dev/zero of="${_ROOT_DEV_PATH}" bs=4M status=progress 2>&1 || true
+        # The system will have crashed by here. This line is a safety net.
+        echo ""
+        warn "Wipe complete — power off and reflash."
+        exit 0
+    fi
+
+    # ── Done (mode 1 only) ────────────────────────────────────────────────────
     echo ""
     echo -e "${G}"
     echo "  ╔══════════════════════════════════════════════════════════╗"
@@ -1052,13 +1125,10 @@ uninstall)
     echo -e "${NC}"
     [[ "${KEEP_REPORTS^^}" == "Y" ]] && info "PDFs still at: ${REPORTS_DIR}  (remove manually if needed)"
     echo ""
-
     read -r -p "  Reboot now? [Y/n]: " DO_REBOOT </dev/tty
     DO_REBOOT="${DO_REBOOT:-Y}"
     if [[ "${DO_REBOOT^^}" == "Y" ]]; then
-        spin_start "Rebooting"
-        sleep 1
-        sudo reboot
+        spin_start "Rebooting"; sleep 1; sudo reboot
     else
         warn "Remember to reboot for kernel changes to take effect."
         echo ""
