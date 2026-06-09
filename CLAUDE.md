@@ -227,6 +227,39 @@ Share a folder named `Reports`. Current target: `\\192.168.0.140\Reports\`.
 
 ---
 
+## CLI — plc_checkweigher
+
+The `plc_checkweigher` CLI is installed at `/usr/local/bin/plc_checkweigher` (or `~/.local/bin/`).
+Source: `bin/plc_checkweigher` (bash script). Uses nmcli for WiFi, systemctl for services.
+
+```
+plc_checkweigher status            # Full system diagnostic — all checks + fix hints
+plc_checkweigher logs              # Live log stream (both services)
+plc_checkweigher restart           # Restart plc_watcher + plc_web
+plc_checkweigher start / stop      # Start or stop both services
+plc_checkweigher queue             # Show SMB pending queue + delivery ledger
+plc_checkweigher push-test         # Push latest PDF to SMB target immediately
+
+plc_checkweigher wifi              # Scan WiFi → select → connect → prompt to update SMB IP
+plc_checkweigher hotspot on        # Start AP hotspot "PLC-Reports" / "plcreport"
+plc_checkweigher hotspot off       # Stop hotspot
+plc_checkweigher hotspot status    # Show hotspot on/off
+plc_checkweigher hotspot scan      # ARP-scan connected PCs → set as SMB_HOST
+
+plc_checkweigher display on/off    # Start/stop LightDM (HDMI display)
+plc_checkweigher display status    # Show display state
+
+plc_checkweigher smb-config        # Interactive: update smb_config.py fields
+```
+
+**Hotspot workflow (direct PC connection):**
+1. `plc_checkweigher hotspot on` — Pi creates AP on wlan0 (Pi IP: 10.42.0.1)
+2. PC connects to WiFi "PLC-Reports" password "plcreport"
+3. `plc_checkweigher hotspot scan` — ARP-scans 10.42.0.0/24, prompts to set PC IP as SMB_HOST
+4. SMB push now works over the hotspot
+
+---
+
 ## Running the Stack
 
 ### Check what's running
