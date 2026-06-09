@@ -248,28 +248,33 @@ def check_network():
                  "Unreachable  (reports will queue until it comes back)")
 
         if SMB_USERNAME and shutil.which("smbclient"):
-            r3 = subprocess.run(
-                ["smbclient", f"//{SMB_HOST}/{SMB_SHARE}",
-                 "-U", f"{SMB_USERNAME}%{SMB_PASSWORD}", "-c", "ls"],
-                capture_output=True, text=True, timeout=8
-            )
-            if r3.returncode == 0:
-                _row("OK", f"SMB auth  //{SMB_HOST}/{SMB_SHARE}",
-                     f"Authenticated as {SMB_USERNAME}")
+            try:
+                r3 = subprocess.run(
+                    ["smbclient", f"//{SMB_HOST}/{SMB_SHARE}",
+                     "-U", f"{SMB_USERNAME}%{SMB_PASSWORD}", "-c", "ls"],
+                    capture_output=True, text=True, timeout=8
+                )
+            except subprocess.TimeoutExpired:
+                _row("WARN", f"SMB auth  //{SMB_HOST}/{SMB_SHARE}",
+                     f"Timed out — {SMB_HOST} unreachable (reports will queue)")
             else:
-                lines = (r3.stderr or r3.stdout).strip().splitlines()
-                err   = lines[-1] if lines else "unknown error"
-                if "LOGON_FAILURE" in err:
-                    _row("ERR", f"SMB auth  //{SMB_HOST}/{SMB_SHARE}",
-                         f"Wrong credentials ({err})",
-                         f"Check SMB_USERNAME/SMB_PASSWORD in smb_config.py. "
-                         f"Test: smbclient -L {SMB_HOST} -U '{SMB_USERNAME}%<password>'")
-                elif "ACCESS_DENIED" in err:
-                    _row("ERR", f"SMB auth  //{SMB_HOST}/{SMB_SHARE}",
-                         "Access denied — share may not exist or user has no permission",
-                         f"On Windows: right-click folder → Share → add '{SMB_USERNAME}' R/W")
+                if r3.returncode == 0:
+                    _row("OK", f"SMB auth  //{SMB_HOST}/{SMB_SHARE}",
+                         f"Authenticated as {SMB_USERNAME}")
                 else:
-                    _row("WARN", f"SMB auth  //{SMB_HOST}/{SMB_SHARE}", err)
+                    lines = (r3.stderr or r3.stdout).strip().splitlines()
+                    err   = lines[-1] if lines else "unknown error"
+                    if "LOGON_FAILURE" in err:
+                        _row("ERR", f"SMB auth  //{SMB_HOST}/{SMB_SHARE}",
+                             f"Wrong credentials ({err})",
+                             f"Check SMB_USERNAME/SMB_PASSWORD in smb_config.py. "
+                             f"Test: smbclient -L {SMB_HOST} -U '{SMB_USERNAME}%<password>'")
+                    elif "ACCESS_DENIED" in err:
+                        _row("ERR", f"SMB auth  //{SMB_HOST}/{SMB_SHARE}",
+                             "Access denied — share may not exist or user has no permission",
+                             f"On Windows: right-click folder → Share → add '{SMB_USERNAME}' R/W")
+                    else:
+                        _row("WARN", f"SMB auth  //{SMB_HOST}/{SMB_SHARE}", err)
 
 
 def check_services():
