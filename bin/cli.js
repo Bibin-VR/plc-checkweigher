@@ -88,7 +88,8 @@ function showAccessDenied() {
   console.log(`  ${R}⚠  Please contact administrator for access${NC}`);
   console.log('');
 
-  process.exit(1);
+  // Exit 0 when invoked by npm postinstall so the install is not marked failed
+  process.exit(process.env.npm_lifecycle_event === 'postinstall' ? 0 : 1);
 }
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
