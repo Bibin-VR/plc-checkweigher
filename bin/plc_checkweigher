@@ -606,11 +606,13 @@ fix)
 
     LOG_DIR="/home/pi/reports/logs"
     mkdir -p "$LOG_DIR" 2>/dev/null || true
-    LOG_FILE="${LOG_DIR}/fix.log"
-    # Rotate log — keep last 1000 lines
-    if [[ -f "$LOG_FILE" ]]; then
-        tail -1000 "$LOG_FILE" > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE" 2>/dev/null || true
-    fi
+    # Build mode tag: "all" or hyphen-joined active scopes
+    _LOG_MODES=""
+    [[ $FIX_WIFI     -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}wifi"
+    [[ $FIX_HEALTH   -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}health"
+    [[ $FIX_PROGRAMS -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}programs"
+    [[ "$_LOG_MODES" == "wifi-health-programs" ]] && _LOG_MODES="all"
+    LOG_FILE="${LOG_DIR}/fix_${_LOG_MODES}_$(date '+%Y%m%d_%H%M%S').log"
     flog()      { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
     ffix_ok()   { spin_ok   "$*"; flog "FIXED : $*"; FIX_COUNT=$((FIX_COUNT+1)); }
     ffix_info() { spin_ok   "$*"; flog "INFO  : $*"; }
@@ -887,11 +889,12 @@ fix)
     if [[ "$_SMB_EN" == "1" && -n "$_SMB_HOST" && -n "$_SMB_USER" ]] \
        && command -v smbclient &>/dev/null; then
         spin_start "Uploading log to SMB share"
+        _LOG_BASENAME="$(basename "$LOG_FILE")"
         if smbclient "//${_SMB_HOST}/${_SMB_SHARE}" \
                -U "${_SMB_USER}%${_SMB_PASS}" \
-               -c "mkdir logs; put ${LOG_FILE} logs/fix.log" &>/dev/null 2>&1; then
-            spin_ok "Log pushed → //${_SMB_HOST}/${_SMB_SHARE}/logs/fix.log"
-            flog "INFO  : Log uploaded to SMB //${_SMB_HOST}/${_SMB_SHARE}/logs/fix.log"
+               -c "mkdir logs; put ${LOG_FILE} logs/${_LOG_BASENAME}" &>/dev/null 2>&1; then
+            spin_ok "Log pushed → //${_SMB_HOST}/${_SMB_SHARE}/logs/${_LOG_BASENAME}"
+            flog "INFO  : Log uploaded to SMB //${_SMB_HOST}/${_SMB_SHARE}/logs/${_LOG_BASENAME}"
         else
             spin_warn "SMB upload failed — log saved locally only"
             flog "WARN  : SMB log upload failed"
