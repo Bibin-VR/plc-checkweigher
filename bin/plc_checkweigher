@@ -151,7 +151,16 @@ case "$CMD" in
 
 # ── System diagnostic ─────────────────────────────────────────────────────────
 status|check|diag)
-    exec "${PYTHON}" "${INSTALL_DIR}/debugger.py" "$@"
+    set +e
+    "${PYTHON}" "${INSTALL_DIR}/debugger.py" "$@"
+    _STATUS_EXIT=$?
+    set -e
+    if [[ $_STATUS_EXIT -ne 0 ]]; then
+        echo ""
+        warn "Errors detected — starting auto-fix ..."
+        sleep 1
+        "$0" fix
+    fi
     ;;
 
 # ── Live logs ─────────────────────────────────────────────────────────────────
@@ -577,6 +586,298 @@ smb-config)
     ;;
 
 # ─────────────────────────────────────────────────────────────────────────────
+# FIX — auto-detect and repair common issues
+# Usage: fix [-wifi] [-health] [-programs]   (no flags = run all)
+# ─────────────────────────────────────────────────────────────────────────────
+fix)
+    FIX_WIFI=0; FIX_HEALTH=0; FIX_PROGRAMS=0
+    if [[ $# -eq 0 ]]; then
+        FIX_WIFI=1; FIX_HEALTH=1; FIX_PROGRAMS=1
+    else
+        for _flag in "$@"; do
+            case "$_flag" in
+            -wifi)     FIX_WIFI=1 ;;
+            -health)   FIX_HEALTH=1 ;;
+            -programs) FIX_PROGRAMS=1 ;;
+            *) warn "Unknown flag: $_flag  (valid: -wifi  -health  -programs)" ;;
+            esac
+        done
+    fi
+
+    LOG_FILE="${INSTALL_DIR}/fix.log"
+    # Rotate log — keep last 1000 lines
+    if [[ -f "$LOG_FILE" ]]; then
+        tail -1000 "$LOG_FILE" > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE" 2>/dev/null || true
+    fi
+    flog()      { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
+    ffix_ok()   { spin_ok   "$*"; flog "FIXED : $*"; FIX_COUNT=$((FIX_COUNT+1)); }
+    ffix_info() { spin_ok   "$*"; flog "INFO  : $*"; }
+    ffix_warn() { spin_warn "$*"; flog "WARN  : $*"; }
+    ffix_err()  { spin_err  "$*"; flog "ERROR : $*"; }
+
+    FIX_COUNT=0
+    flog "=== Run started | wifi=${FIX_WIFI} health=${FIX_HEALTH} programs=${FIX_PROGRAMS} ==="
+
+    banner "Auto Fix"
+    echo ""
+    need_sudo
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # WIFI
+    # ─────────────────────────────────────────────────────────────────────────
+    if [[ $FIX_WIFI -eq 1 ]]; then
+        echo -e "  ${B}▸ WiFi${NC}"; hr; echo ""
+
+        spin_start "NetworkManager"
+        if ! systemctl is-active --quiet NetworkManager 2>/dev/null; then
+            sudo systemctl start NetworkManager 2>/dev/null || true; sleep 2
+            if systemctl is-active --quiet NetworkManager 2>/dev/null; then
+                ffix_ok "NetworkManager was down — restarted"
+            else
+                ffix_err "NetworkManager failed to start"
+            fi
+        else
+            ffix_info "NetworkManager running"
+        fi
+
+        spin_start "WiFi hardware block"
+        if rfkill list wifi 2>/dev/null | grep -q "Hard blocked: yes"; then
+            ffix_warn "Hard blocked — check physical WiFi switch"
+        elif rfkill list wifi 2>/dev/null | grep -q "Soft blocked: yes"; then
+            rfkill unblock wifi 2>/dev/null || true
+            ffix_ok "WiFi soft-block removed"
+        else
+            ffix_info "rfkill OK"
+        fi
+
+        spin_start "wlan0 interface"
+        if ! ip link show wlan0 &>/dev/null; then
+            ffix_warn "wlan0 not found — adapter missing?"
+        elif ! ip link show wlan0 2>/dev/null | grep -q "UP"; then
+            sudo ip link set wlan0 up 2>/dev/null || true; sleep 1
+            if ip link show wlan0 2>/dev/null | grep -q "UP"; then
+                ffix_ok "wlan0 was down — brought up"
+            else
+                ffix_err "Could not bring up wlan0"
+            fi
+        else
+            ffix_info "wlan0 UP"
+        fi
+
+        spin_start "WiFi connection"
+        _WIFI_CON=$(nmcli -t -f NAME,DEVICE,TYPE con show --active 2>/dev/null \
+            | grep ":wlan0:802-11-wireless" | cut -d: -f1 | head -1 || echo "")
+        if [[ -z "$_WIFI_CON" ]]; then
+            _LAST_CON=$(nmcli -t -f NAME,TYPE con show 2>/dev/null \
+                | grep ":802-11-wireless" | head -1 | cut -d: -f1 || echo "")
+            if [[ -n "$_LAST_CON" ]]; then
+                _spin_kill
+                spin_start "Reconnecting to '${_LAST_CON}'"
+                sudo nmcli connection up "$_LAST_CON" 2>/dev/null || true; sleep 3
+                _WIFI_NOW=$(nmcli -t -f NAME,DEVICE,TYPE con show --active 2>/dev/null \
+                    | grep ":wlan0:802-11-wireless" | cut -d: -f1 | head -1 || echo "")
+                if [[ -n "$_WIFI_NOW" ]]; then
+                    _NEW_IP=$(ip -4 addr show wlan0 2>/dev/null \
+                        | grep -oP '(?<=inet )\d+\.\d+\.\d+\.\d+' || echo "")
+                    ffix_ok "Reconnected to '${_WIFI_NOW}'  (IP: ${_NEW_IP:-?})"
+                else
+                    ffix_warn "Could not reconnect — run: plc_checkweigher wifi"
+                fi
+            else
+                ffix_warn "No saved connections — run: plc_checkweigher wifi"
+            fi
+        else
+            _WIFI_IP=$(ip -4 addr show wlan0 2>/dev/null \
+                | grep -oP '(?<=inet )\d+\.\d+\.\d+\.\d+' || echo "?")
+            ffix_info "'${_WIFI_CON}'  (${_WIFI_IP})"
+        fi
+
+        spin_start "Internet connectivity"
+        if ping -c 2 -W 2 8.8.8.8 &>/dev/null; then
+            ffix_info "Internet reachable"
+        else
+            ffix_warn "No internet — local LAN may still work"
+        fi
+
+        echo ""
+    fi
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # HEALTH
+    # ─────────────────────────────────────────────────────────────────────────
+    if [[ $FIX_HEALTH -eq 1 ]]; then
+        echo -e "  ${B}▸ System Health${NC}"; hr; echo ""
+
+        spin_start "Disk space"
+        _DISK_PCT=$(df / --output=pcent 2>/dev/null | tail -1 | tr -d ' %' || echo "0")
+        if [[ "${_DISK_PCT:-0}" -ge 95 ]]; then
+            sudo journalctl --vacuum-size=100M 2>/dev/null || true
+            _DISK_AFTER=$(df / --output=pcent 2>/dev/null | tail -1 | tr -d ' %' || echo "?")
+            ffix_ok "Disk ${_DISK_PCT}% → ${_DISK_AFTER}% after journal clean"
+        elif [[ "${_DISK_PCT:-0}" -ge 85 ]]; then
+            ffix_warn "Disk ${_DISK_PCT}% — consider removing old reports"
+        else
+            ffix_info "Disk ${_DISK_PCT}%"
+        fi
+
+        spin_start "CPU temperature"
+        if command -v vcgencmd &>/dev/null; then
+            _TEMP=$(vcgencmd measure_temp 2>/dev/null | grep -oP '[\d.]+' | head -1 || echo "0")
+            _TEMP_INT=${_TEMP%.*}
+            if [[ "${_TEMP_INT:-0}" -ge 80 ]]; then
+                ffix_warn "${_TEMP}°C — check ventilation"
+            else
+                ffix_info "${_TEMP}°C"
+            fi
+        else
+            ffix_info "Temperature check not available"
+        fi
+
+        spin_start "Memory"
+        _MEM_FREE=$(free -m 2>/dev/null | awk '/^Mem:/{print $7}' || echo "999")
+        _MEM_TOTAL=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}' || echo "1")
+        if [[ "${_MEM_FREE:-999}" -lt 50 ]]; then
+            echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true
+            _MEM_AFTER=$(free -m 2>/dev/null | awk '/^Mem:/{print $7}' || echo "?")
+            ffix_ok "Low memory ${_MEM_FREE}MB → ${_MEM_AFTER}MB after cache drop"
+        else
+            ffix_info "${_MEM_FREE}MB / ${_MEM_TOTAL}MB free"
+        fi
+
+        spin_start "System time"
+        if timedatectl status 2>/dev/null | grep -q "synchronized: yes"; then
+            ffix_info "NTP synchronized"
+        else
+            sudo timedatectl set-ntp true 2>/dev/null || true
+            command -v chronyc &>/dev/null && sudo chronyc makestep 2>/dev/null || true
+            sleep 2
+            if timedatectl status 2>/dev/null | grep -q "synchronized: yes"; then
+                ffix_ok "NTP sync restored"
+            else
+                ffix_warn "Time not synced — no internet?"
+            fi
+        fi
+
+        spin_start "Reports directory"
+        _REPORTS_DIR="/home/pi/reports"
+        if [[ ! -d "$_REPORTS_DIR" ]]; then
+            mkdir -p "$_REPORTS_DIR" 2>/dev/null && ffix_ok "Created ${_REPORTS_DIR}" \
+                                                 || ffix_warn "Could not create ${_REPORTS_DIR}"
+        else
+            ffix_info "${_REPORTS_DIR} OK"
+        fi
+
+        spin_start "SMB config file"
+        if [[ ! -f "$SMB_CFG" ]]; then
+            printf 'SMB_ENABLED  = False\nSMB_HOST     = ""\nSMB_SHARE    = "Reports"\nSMB_USERNAME = ""\nSMB_PASSWORD = ""\nSMB_SUBDIR   = ""\n' \
+                > "$SMB_CFG" 2>/dev/null
+            ffix_ok "Created default smb_config.py (disabled — run: plc_checkweigher smb-config)"
+        else
+            ffix_info "smb_config.py present"
+        fi
+
+        echo ""
+    fi
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PROGRAMS
+    # ─────────────────────────────────────────────────────────────────────────
+    if [[ $FIX_PROGRAMS -eq 1 ]]; then
+        echo -e "  ${B}▸ Programs & Services${NC}"; hr; echo ""
+
+        for _SVC in plc_watcher plc_web; do
+            spin_start "${_SVC}"
+            _SVC_STATE=$(systemctl is-active "$_SVC" 2>/dev/null || echo "inactive")
+            if [[ "$_SVC_STATE" != "active" ]]; then
+                sudo systemctl enable "$_SVC" 2>/dev/null || true
+                sudo systemctl restart "$_SVC" 2>/dev/null || true; sleep 2
+                _SVC_NOW=$(systemctl is-active "$_SVC" 2>/dev/null || echo "inactive")
+                if [[ "$_SVC_NOW" == "active" ]]; then
+                    ffix_ok "${_SVC} restarted (was: ${_SVC_STATE})"
+                else
+                    ffix_err "${_SVC} failed — check: journalctl -u ${_SVC} -n 30"
+                fi
+            else
+                ffix_info "${_SVC} active"
+            fi
+        done
+
+        spin_start "Python venv"
+        if [[ ! -x "$PYTHON" ]]; then
+            ffix_err "Venv missing at ${PYTHON} — re-run installer"
+        else
+            ffix_info "Venv OK"
+        fi
+
+        spin_start "Python packages"
+        _PKG_MISSING=""
+        for _pkg in flask reportlab pymcprotocol impacket; do
+            "${PYTHON}" -c "import ${_pkg}" &>/dev/null 2>&1 || _PKG_MISSING="${_PKG_MISSING} ${_pkg}"
+        done
+        if [[ -n "$_PKG_MISSING" ]]; then
+            _spin_kill
+            spin_start "Installing:${_PKG_MISSING}"
+            "${PYTHON}" -m pip install ${_PKG_MISSING} --quiet 2>/dev/null || true
+            _PKG_STILL=""
+            for _pkg in ${_PKG_MISSING}; do
+                "${PYTHON}" -c "import ${_pkg}" &>/dev/null 2>&1 || _PKG_STILL="${_PKG_STILL} ${_pkg}"
+            done
+            if [[ -z "$_PKG_STILL" ]]; then
+                ffix_ok "Installed:${_PKG_MISSING}"
+            else
+                ffix_warn "Could not install:${_PKG_STILL}"
+            fi
+        else
+            ffix_info "All packages present"
+        fi
+
+        spin_start "Delivery queue"
+        _QUEUE="${INSTALL_DIR}/delivery_queue.json"
+        if [[ ! -f "$_QUEUE" ]]; then
+            echo "[]" > "$_QUEUE"
+            ffix_ok "Created missing delivery_queue.json"
+        elif ! "${PYTHON}" -c "import json; json.load(open('${_QUEUE}'))" &>/dev/null 2>&1; then
+            mv "$_QUEUE" "${_QUEUE}.broken.$(date +%s)" 2>/dev/null || true
+            echo "[]" > "$_QUEUE"
+            ffix_ok "Corrupt delivery queue reset (backup saved)"
+        else
+            ffix_info "delivery_queue.json valid"
+        fi
+
+        spin_start "systemd unit files"
+        _RESTORED=""
+        for _src in "${INSTALL_DIR}/plc_watcher.service" "${INSTALL_DIR}/web/plc_web.service"; do
+            [[ ! -f "$_src" ]] && continue
+            _dst="/etc/systemd/system/$(basename "$_src")"
+            if [[ ! -f "$_dst" ]]; then
+                sudo cp "$_src" "$_dst" 2>/dev/null || true
+                _RESTORED="${_RESTORED} $(basename "$_src")"
+            fi
+        done
+        if [[ -n "$_RESTORED" ]]; then
+            sudo systemctl daemon-reload 2>/dev/null || true
+            ffix_ok "Restored:${_RESTORED}"
+        else
+            ffix_info "Unit files present"
+        fi
+
+        echo ""
+    fi
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    flog "=== Complete: ${FIX_COUNT} fix(es) applied ==="
+    hr
+    echo ""
+    if [[ $FIX_COUNT -gt 0 ]]; then
+        ok "${FIX_COUNT} fix(es) applied"
+    else
+        ok "All checks passed — no fixes needed"
+    fi
+    info "Log: ${LOG_FILE}"
+    echo ""
+    ;;
+
+# ─────────────────────────────────────────────────────────────────────────────
 # UNINSTALL — remove everything setup.sh installed
 # ─────────────────────────────────────────────────────────────────────────────
 uninstall)
@@ -745,7 +1046,11 @@ help|--help|-h)
     echo -e "${B}  plc_checkweigher${NC} — PLC Check-Weigher system CLI"
     echo ""
     echo -e "  ${W}Diagnostics${NC}"
-    echo "    status                     Full system diagnostic — all checks + fix hints"
+    echo "    status                     Full system diagnostic (auto-runs fix on errors)"
+    echo "    fix                        Auto-detect and repair all issues + write log"
+    echo "    fix -wifi                  Fix WiFi connectivity only"
+    echo "    fix -health                Fix disk, memory, time, dirs"
+    echo "    fix -programs              Fix services, packages, queue, unit files"
     echo "    logs                       Stream live logs (plc_watcher + plc_web)"
     echo "    queue                      Show SMB pending queue and delivery ledger"
     echo ""
