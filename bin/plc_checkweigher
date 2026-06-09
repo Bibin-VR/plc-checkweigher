@@ -604,7 +604,9 @@ fix)
         done
     fi
 
-    LOG_FILE="${INSTALL_DIR}/fix.log"
+    LOG_DIR="/home/pi/reports/logs"
+    mkdir -p "$LOG_DIR" 2>/dev/null || true
+    LOG_FILE="${LOG_DIR}/fix.log"
     # Rotate log — keep last 1000 lines
     if [[ -f "$LOG_FILE" ]]; then
         tail -1000 "$LOG_FILE" > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE" 2>/dev/null || true
