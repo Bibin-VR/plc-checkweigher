@@ -12,12 +12,13 @@
 #    3.  Clone / update repo
 #    4.  Python venv + pip install
 #    5.  Create /home/<user>/reports
-#    6.  WiFi     — scan → pick from list → password
-#    7.  SMB      — enter host IP, share name, credentials  → smb_config.py
+#    6.  WiFi      — scan → pick from list → password
+#    7.  SMB       — enter host IP, share name, credentials  → smb_config.py
 #    8.  NetworkManager-wait-online
 #    9.  systemd services (plc_watcher + plc_web)
-#   10.  Boot logo  — Plymouth theme with logo.png + "SAI SAMARTH ENGG"
-#   11.  Display    — LightDM priority, CPU isolation, utmpx, GPU memory
+#   10.  Boot logo — Plymouth theme with logo.png + "SAI SAMARTH ENGG"
+#   11.  Display   — LightDM priority, CPU isolation, utmpx
+#  11b.  VS Code   — priority daemon: cores 0-2, Nice=-5
 #   12.  PREEMPT_RT kernel  ← installed last so only one reboot is needed
 #   13.  REBOOT
 # =============================================================================
@@ -494,7 +495,7 @@ Nice=-5
 
 LimitNOFILE=65536
 EOF
-    ok "LightDM: CPUAffinity=0-2, Nice=-5, network dep removed"
+    ok "LightDM: CPUAffinity=0-2, Nice=-5, restarts up to 20×, network dep removed"
 
     # ── Fix utmpx — PAM needs /run/utmp to track sessions ───────────────────
     cat > /etc/tmpfiles.d/utmp-fix.conf << 'EOF'
@@ -503,18 +504,55 @@ EOF
     systemd-tmpfiles --create /etc/tmpfiles.d/utmp-fix.conf 2>/dev/null || true
     ok "/run/utmp fixed (utmpx PAM session tracking)"
 
-    # ── GPU memory — 128 MB: enough for 1080p desktop and HMI use ───────────
-    sed -i '/^gpu_mem=/d' "${BOOT_FW}/config.txt"
-    if grep -q "### PLC-RT-BLOCK-START ###" "${BOOT_FW}/config.txt"; then
-        sed -i '/### PLC-RT-BLOCK-START ###/i gpu_mem=128' "${BOOT_FW}/config.txt"
-    else
-        echo "gpu_mem=128" >> "${BOOT_FW}/config.txt"
-    fi
-    ok "gpu_mem=128 set in config.txt (128 MB VRAM)"
+    # gpu_mem is intentionally left at Pi OS firmware default.
+    # display_auto_detect=1 (already in config.txt) handles VRAM and output
+    # automatically — whether the Pi is headless or a display is connected.
 
     systemctl daemon-reload
     systemctl enable lightdm.service 2>/dev/null || true
     ok "LightDM enabled — starts on every boot when display is connected"
+}
+
+# ── 11b. VS Code server priority ──────────────────────────────────────────────
+setup_vscode_priority() {
+    step "VS Code server priority ..."
+
+    cat > /usr/local/bin/vscode-priority-daemon << 'DAEMON'
+#!/usr/bin/env bash
+# Apply CPU affinity (cores 0-2) and Nice=-5 to VS Code server processes.
+# Core 3 is reserved exclusively for the SCHED_FIFO PLC process.
+# Runs every 60s so newly-spawned extension host processes are caught promptly.
+while true; do
+    mapfile -t pids < <(pgrep -u pi -f '\.vscode-server' 2>/dev/null || true)
+    for pid in "${pids[@]}"; do
+        taskset -cp 0-2 "$pid" >/dev/null 2>&1 || true
+        renice -n -5 -p "$pid" >/dev/null 2>&1 || true
+    done
+    sleep 60
+done
+DAEMON
+    chmod +x /usr/local/bin/vscode-priority-daemon
+
+    cat > /etc/systemd/system/vscode-priority.service << 'EOF'
+[Unit]
+Description=VS Code Server priority manager (cores 0-2, Nice=-5)
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/vscode-priority-daemon
+Restart=always
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable vscode-priority.service
+    ok "vscode-priority.service  (cores 0-2, Nice=-5) — starts on every boot"
 }
 
 # ── 12. RT kernel — installed LAST so only one reboot is needed ───────────────
@@ -621,9 +659,10 @@ main() {
     setup_smb                 # 7  — interactive SMB config → smb_config.py
     setup_network_online      # 8
     install_services          # 9
-    setup_boot_logo           # 9  — Plymouth: logo + "SAI SAMARTH ENGG"
-    setup_display             # 10 — LightDM priority, CPU isolation, utmpx, GPU
-    install_rt_kernel         # 11 — LAST, so only one reboot needed
+    setup_boot_logo           # 10 — Plymouth: logo + "SAI SAMARTH ENGG"
+    setup_display             # 11 — LightDM priority, CPU isolation, utmpx
+    setup_vscode_priority     # 11b — VS Code: cores 0-2, Nice=-5
+    install_rt_kernel         # 12 — LAST, so only one reboot needed
     do_reboot                 # 12 — single reboot applies everything
 }
 

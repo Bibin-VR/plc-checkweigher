@@ -1,6 +1,5 @@
 [Unit]
 Description=PLC Check-Weigher Start Watcher
-# Wait until WiFi/ethernet has an IP address before starting
 After=network-online.target time-sync.target
 Wants=network-online.target
 
@@ -14,22 +13,11 @@ Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-
-# ── Real-time scheduling ──────────────────────────────────────────────────────
-# SCHED_FIFO priority 50 — preempts all normal (SCHED_OTHER) tasks.
-# CPUSchedulingResetOnFork=no (default) means plc_reader.py subprocess
-# launched via Popen inherits this RT policy automatically.
 CPUSchedulingPolicy=fifo
 CPUSchedulingPriority=50
-
-# Real-time I/O — gives disk writes (CSV, PDF) the highest I/O class
 IOSchedulingClass=realtime
 IOSchedulingPriority=0
-
-# CPU affinity — pin to core 3 (isolated from OS noise on a 4-core Pi)
 CPUAffinity=3
-
-# Slightly elevated nice as a secondary signal to the scheduler
 Nice=-15
 
 [Install]
