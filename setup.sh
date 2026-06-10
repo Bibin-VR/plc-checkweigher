@@ -479,13 +479,13 @@ setup_display() {
 # Start after hardware udev settles (HDMI/DSI detected) — not after network.
 After=systemd-udev-settle.service local-fs.target acpid.socket dbus.service
 Wants=systemd-udev-settle.service
+# StartLimit* MUST be in [Unit] — ignored in [Service].
+StartLimitBurst=10
+StartLimitIntervalSec=60
 
 [Service]
-# Generous restart policy — display should always recover.
-StartLimitBurst=20
-StartLimitIntervalSec=120
 Restart=on-failure
-RestartSec=3
+RestartSec=5
 
 # CPU cores 0-2 only — core 3 is reserved for SCHED_FIFO PLC process.
 CPUAffinity=0 1 2
@@ -495,7 +495,7 @@ Nice=-5
 
 LimitNOFILE=65536
 EOF
-    ok "LightDM: CPUAffinity=0-2, Nice=-5, restarts up to 20×, network dep removed"
+    ok "LightDM: CPUAffinity=0-2, Nice=-5, StartLimitBurst=10 in [Unit]"
 
     # ── Fix utmpx — PAM needs /run/utmp to track sessions ───────────────────
     cat > /etc/tmpfiles.d/utmp-fix.conf << 'EOF'
@@ -504,13 +504,33 @@ EOF
     systemd-tmpfiles --create /etc/tmpfiles.d/utmp-fix.conf 2>/dev/null || true
     ok "/run/utmp fixed (utmpx PAM session tracking)"
 
-    # gpu_mem is intentionally left at Pi OS firmware default.
-    # display_auto_detect=1 (already in config.txt) handles VRAM and output
-    # automatically — whether the Pi is headless or a display is connected.
+    # ── Fix vc4-kms display driver — PREEMPT_RT EPROBE_DEFER workaround ─────
+    # On the RT kernel, vc4_hdmi defers its probe indefinitely waiting for the
+    # PCM audio component (-517 = EPROBE_DEFER). noaudio removes that dependency
+    # so the display DRM card is created on first probe attempt.
+    # hdmi_force_hotplug=1 initialises HDMI hardware even when no display is
+    # connected at boot (required for headless + Pi Connect screen sharing).
+    sed -i 's/^dtoverlay=vc4-kms-v3d$/dtoverlay=vc4-kms-v3d,noaudio/' \
+        "${BOOT_FW}/config.txt" 2>/dev/null || true
+    if ! grep -q '^hdmi_force_hotplug' "${BOOT_FW}/config.txt"; then
+        if grep -q '^\[all\]' "${BOOT_FW}/config.txt"; then
+            sed -i '/^\[all\]/a hdmi_force_hotplug=1' "${BOOT_FW}/config.txt"
+        else
+            echo "hdmi_force_hotplug=1" >> "${BOOT_FW}/config.txt"
+        fi
+    else
+        sed -i 's/^hdmi_force_hotplug=.*/hdmi_force_hotplug=1/' "${BOOT_FW}/config.txt"
+    fi
+    ok "vc4-kms-v3d,noaudio + hdmi_force_hotplug=1  (HDMI always initialised)"
+
+    # ── Enable rpi-connect user service (Pi Connect remote access) ──────────
+    loginctl enable-linger "${PI_USER}" 2>/dev/null || true
+    sudo -u "${PI_USER}" systemctl --user enable rpi-connect.service 2>/dev/null || true
+    ok "rpi-connect user service enabled (sign in with: rpi-connect signin)"
 
     systemctl daemon-reload
     systemctl enable lightdm.service 2>/dev/null || true
-    ok "LightDM enabled — starts on every boot when display is connected"
+    ok "LightDM enabled — starts on every boot"
 }
 
 # ── 11b. VS Code server priority ──────────────────────────────────────────────
