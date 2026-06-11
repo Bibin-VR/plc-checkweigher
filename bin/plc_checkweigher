@@ -1127,6 +1127,132 @@ SMBC
     ;;
 
 # ─────────────────────────────────────────────────────────────────────────────
+# UPDATE — pull latest code from GitHub, re-lock files, restart services
+# ─────────────────────────────────────────────────────────────────────────────
+update)
+    banner "System Update"
+    echo ""
+    need_sudo
+
+    # ── Warn if a batch is actively running ───────────────────────────────────
+    _IS_RUNNING=0
+    if [[ -f "/tmp/plc_live.json" ]]; then
+        _RUN_VAL=$("${PYTHON}" -c \
+            "import json; d=json.load(open('/tmp/plc_live.json')); print(d.get('running',False))" \
+            2>/dev/null || echo "False")
+        [[ "$_RUN_VAL" == "True" ]] && _IS_RUNNING=1
+    fi
+
+    if [[ $_IS_RUNNING -eq 1 ]]; then
+        warn "A batch is currently RUNNING on the PLC."
+        warn "The update will stop the current batch — any unsaved data will be lost."
+        echo ""
+        read -r -p "  Continue anyway? [y/N]: " _UPD_CONT </dev/tty
+        _UPD_CONT="${_UPD_CONT:-N}"
+        [[ "${_UPD_CONT^^}" == "Y" ]] || { echo "  Update cancelled."; exit 0; }
+        echo ""
+    fi
+
+    # ── Network reachability ──────────────────────────────────────────────────
+    spin_start "Checking connectivity"
+    if ! ping -c 1 -W 3 8.8.8.8 &>/dev/null && ! ping -c 1 -W 3 github.com &>/dev/null; then
+        spin_err "No internet connection — cannot pull updates"
+        exit 1
+    fi
+    spin_ok "Network reachable"
+
+    # ── Snapshot current commit ───────────────────────────────────────────────
+    _GIT="sudo git -c safe.directory=${INSTALL_DIR} -C ${INSTALL_DIR}"
+    _PREV_HASH=$(${_GIT} rev-parse HEAD 2>/dev/null || echo "unknown")
+    _PREV_SHORT="${_PREV_HASH:0:7}"
+
+    # ── Pull ──────────────────────────────────────────────────────────────────
+    spin_start "Pulling latest code from GitHub"
+    _PULL_OUT=$(${_GIT} pull origin main 2>&1 || echo "GIT_FAILED")
+
+    if echo "$_PULL_OUT" | grep -qE "^GIT_FAILED|^error:|^fatal:"; then
+        spin_err "git pull failed"
+        echo "$_PULL_OUT" | head -6 | sed 's/^/     /'
+        exit 1
+    fi
+
+    _NEW_HASH=$(${_GIT} rev-parse HEAD 2>/dev/null || echo "unknown")
+    _NEW_SHORT="${_NEW_HASH:0:7}"
+
+    if [[ "$_PREV_HASH" == "$_NEW_HASH" ]]; then
+        spin_ok "Already up to date  (${_PREV_SHORT})"
+        echo ""
+        info "No changes pulled — services not restarted."
+        echo ""
+        exit 0
+    fi
+    spin_ok "Pulled  ${_PREV_SHORT} → ${_NEW_SHORT}"
+
+    # ── Show what changed ─────────────────────────────────────────────────────
+    echo ""
+    info "Changes:"
+    ${_GIT} log --oneline "${_PREV_HASH}..HEAD" 2>/dev/null \
+        | sed 's/^/     /' | head -15
+    echo ""
+
+    # ── Re-lock source files (root:root 644) ──────────────────────────────────
+    spin_start "Re-locking source file permissions"
+    sudo find "${INSTALL_DIR}" -maxdepth 1 -name "*.py" \
+        -exec chown root:root {} \; -exec chmod 644 {} \; 2>/dev/null || true
+    sudo find "${INSTALL_DIR}/web" -name "*.py" \
+        -exec chown root:root {} \; -exec chmod 644 {} \; 2>/dev/null || true
+    sudo chown root:root "${INSTALL_DIR}/bin/plc_checkweigher" 2>/dev/null && \
+        sudo chmod 755 "${INSTALL_DIR}/bin/plc_checkweigher" 2>/dev/null || true
+    # Keep data/ writable by pi
+    sudo chown -R pi:pi "${DATA_DIR}" 2>/dev/null || true
+    sudo chmod 755 "${DATA_DIR}" 2>/dev/null || true
+    spin_ok "Source files locked  (root:root 644)"
+
+    # ── Install updated CLI to /usr/local/bin/ ────────────────────────────────
+    spin_start "Installing updated CLI  (/usr/local/bin/plc_checkweigher)"
+    if sudo cp "${INSTALL_DIR}/bin/plc_checkweigher" /usr/local/bin/plc_checkweigher \
+       && sudo chmod 755 /usr/local/bin/plc_checkweigher; then
+        spin_ok "CLI updated"
+    else
+        spin_warn "CLI install failed — still running previous version until next install"
+    fi
+
+    # ── Update systemd unit files if they changed ─────────────────────────────
+    _UNITS_UPDATED=0
+    for _svc_src in "${INSTALL_DIR}/plc_watcher.service" \
+                    "${INSTALL_DIR}/web/plc_web.service"; do
+        [[ ! -f "$_svc_src" ]] && continue
+        _svc_dst="/etc/systemd/system/$(basename "$_svc_src")"
+        if [[ ! -f "$_svc_dst" ]] || ! diff -q "$_svc_src" "$_svc_dst" &>/dev/null; then
+            sudo cp "$_svc_src" "$_svc_dst" 2>/dev/null && _UNITS_UPDATED=1
+        fi
+    done
+    if [[ $_UNITS_UPDATED -eq 1 ]]; then
+        spin_start "Reloading systemd  (unit files changed)"
+        sudo systemctl daemon-reload 2>/dev/null || true
+        spin_ok "systemd reloaded"
+    fi
+
+    # ── Restart services ──────────────────────────────────────────────────────
+    spin_start "Restarting services"
+    sudo systemctl restart plc_watcher plc_web 2>/dev/null
+    sleep 2
+    spin_ok "Services restarted"
+
+    # ── Final status ──────────────────────────────────────────────────────────
+    echo ""
+    _UW=$(systemctl is-active plc_watcher 2>/dev/null || echo "inactive")
+    _UWb=$(systemctl is-active plc_web     2>/dev/null || echo "inactive")
+    [[ "$_UW"  == "active" ]] && echo -e "  ${G}✓${NC}  plc_watcher  active" \
+                               || echo -e "  ${R}✗${NC}  plc_watcher  ${_UW}"
+    [[ "$_UWb" == "active" ]] && echo -e "  ${G}✓${NC}  plc_web      active" \
+                               || echo -e "  ${R}✗${NC}  plc_web      ${_UWb}"
+    echo ""
+    ok "Update complete  (${_PREV_SHORT} → ${_NEW_SHORT})"
+    echo ""
+    ;;
+
+# ─────────────────────────────────────────────────────────────────────────────
 # UNINSTALL — two modes: software-only or full drive wipe
 # ─────────────────────────────────────────────────────────────────────────────
 uninstall)
@@ -1389,6 +1515,7 @@ help|--help|-h)
     echo -e "  ${W}Configuration${NC}"
     echo "    smb-config                 Interactively update SMB delivery target"
     echo "    push-test                  Push latest PDF to SMB target now"
+    echo "    update                     Pull latest code from GitHub and restart services"
     echo ""
     echo -e "  ${W}Display${NC}"
     echo "    display on                 Enable display (start LightDM)"
