@@ -1,6 +1,6 @@
 {
   "name": "plc-checkweigher",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "description": "One-command installer for the PLC Check-Weigher system on Raspberry Pi (PREEMPT_RT kernel, Python stack, WiFi, SMB, systemd RT services)",
   "scripts": {
     "postinstall": "node bin/cli.js"
