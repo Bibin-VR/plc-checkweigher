@@ -10,4 +10,6 @@ package-lock.json
 smb_config.py
 delivery_queue.json
 delivery_queue.json.tmp
+delivery_queue.json.broken.*
 delivery_sent.log
+data/

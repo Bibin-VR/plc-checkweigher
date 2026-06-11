@@ -25,6 +25,10 @@ PLC_PORT          = 1025
 BIT_POLL          = 0.05   # seconds between bit polls (50 ms)
 KIOSK_STATE_PATH  = "/tmp/plc_live.json"
 
+# Item event stays in kiosk JSON for this many poll cycles (50 ms each)
+# so the SSE stream (250 ms poll) is guaranteed to catch it.
+ITEM_EVENT_TTL_CYCLES = 8   # 8 × 50 ms = 400 ms
+
 
 def _write_kiosk(data: dict):
     """Atomically write live state JSON for the kiosk dashboard."""
@@ -87,6 +91,10 @@ def connect() -> Type3E:
             return plc
         except Exception as e:
             print(f"Connection failed: {e}  — retry in 5 s")
+            # Keep kiosk updated during retry loop so dashboard never shows stale state
+            _write_kiosk({"ts": time.time(), "source": "reader",
+                           "plc_connected": False, "running": False,
+                           "status": "OFFLINE", "item_event": None})
             time.sleep(5)
 
 
@@ -94,16 +102,16 @@ def connect() -> Type3E:
 
 def read_bits(plc) -> tuple:
     """
-    M102 = machine RUNNING (SET on start, RST on stop — covers HMI M101, X11, X13)
-    M200 = ACCEPT   (weight within tolerance — D6594 counter)
-    M260 = OVER WEIGHT  (weight >= upper limit — counted in D6602)
-    M262 = UNDER WEIGHT (weight <= lower limit — counted in D6602)
     Returns (m102, m260, m262, m200) as 0/1.
+
+    M102 failure is intentionally NOT caught here — it signals PLC
+    disconnection and must propagate to the outer handler so the reader
+    can write OFFLINE, close the batch, and reconnect cleanly.
+
+    M260/M262/M200 failures default to 0 (safe: no spurious item triggers).
     """
-    try:
-        m102 = plc.batchread_bitunits(headdevice="M102", readsize=1)[0]
-    except Exception:
-        m102 = 1  # assume running if unreadable — avoids spurious stop trigger
+    # Do NOT wrap in try/except — let caller handle disconnection.
+    m102 = plc.batchread_bitunits(headdevice="M102", readsize=1)[0]
     try:
         pair = plc.batchread_bitunits(headdevice="M260", readsize=3)
         m260, m262 = pair[0], pair[2]
@@ -248,6 +256,11 @@ def main():
     upper_lim   = 0.0
     last_status = "IDLE"
 
+    # Item event pending: stays in kiosk JSON for ITEM_EVENT_TTL_CYCLES cycles
+    # so the SSE stream (250 ms poll) is guaranteed to see it.
+    pending_item_event = None
+    item_event_ttl     = 0
+
     def _now_str():
         n = datetime.now()
         return f"{n.strftime('%d/%m/%Y')}  {n.strftime('%H:%M:%S')}"
@@ -303,24 +316,54 @@ def main():
                 lower_lim = float32(r_lim, 0)   # D500+D501
                 upper_lim = float32(r_lim, 10)  # D510+D511
             except Exception:
-                pass   # keep previous values
+                pass   # keep previous values — M102 failure below will handle reconnect
 
+            # ── Read trigger bits — M102 failure propagates to reconnect handler ──
             try:
                 m102, m260, m262, m200 = read_bits(plc)
-            except OSError as e:
-                print(f"Connection lost: {e}  — reconnecting...")
+            except Exception as e:
+                # M102 could not be read — PLC disconnected or timed out.
+                print(f"[reader] PLC lost ({type(e).__name__}: {e}) — ending batch + reconnecting ...")
+                _write_kiosk({"ts": time.time(), "source": "reader",
+                               "plc_connected": False, "running": False,
+                               "status": "OFFLINE", "item_event": None})
                 try:
                     plc.close()
                 except Exception:
                     pass
+
+                # Close batch before reconnecting — machine may have stopped.
+                end_batch("PLC disconnect")
+
                 plc = connect()
                 first_poll = True
                 prev_m102 = prev_m260 = prev_m262 = prev_m200 = 0
-                continue
-            except Exception as e:
-                print(f"Bit read error: {e}")
-                time.sleep(BIT_POLL)
-                continue
+                pending_item_event = None
+                item_event_ttl = 0
+                item_count = accepted = rejected = 0
+                last_pallet = None
+                batch_start_dt = ""
+                sw_pallet = None
+                prev_d3300 = None
+                batch_data = {}
+                event_rows = []
+                last_status = "IDLE"
+
+                # After reconnect: check if machine is actually still running.
+                # If M102=0 now, the reader should exit so the watcher
+                # can resume monitoring for the next START.
+                try:
+                    m102_check = plc.batchread_bitunits(headdevice="M102", readsize=1)[0]
+                except Exception:
+                    m102_check = 0
+
+                if not m102_check:
+                    print("[reader] Machine stopped — returning to watcher.")
+                    return   # watcher will reconnect and wait for next START
+                else:
+                    print("[reader] Machine still running after reconnect — continuing.")
+                    csv_path, csv_file, csv_writer = open_csv()
+                    continue
 
             # On first successful read after startup or reconnect, just capture
             # the current bit state as baseline — do not fire any edges.
@@ -331,6 +374,19 @@ def main():
 
             # Falling edge on M102 = stop button pressed (HMI M101, X11, X13, or fault)
             if prev_m102 and not m102:
+                # Write stopped state BEFORE closing batch (which takes several seconds)
+                _write_kiosk({"ts": time.time(), "source": "reader",
+                               "plc_connected": True, "running": False,
+                               "status": "IDLE", "item_event": None,
+                               "weight": live_w, "target": target_w,
+                               "lower_limit": lower_lim, "upper_limit": upper_lim,
+                               "total": item_count, "accept": accepted, "reject": rejected,
+                               "batch_no": batch_data.get("batch_no", 0),
+                               "product_name": batch_data.get("product_name", ""),
+                               "operator_id": batch_data.get("operator_id", ""),
+                               "machine": batch_data.get("machine", "CW-2400") or "CW-2400",
+                               "pallet_no": batch_data.get("pallet_no", 0),
+                               "lot_no": batch_data.get("lot_no", 0)})
                 end_batch("STOP button")
                 return
 
@@ -351,46 +407,28 @@ def main():
                     rejected += 1
 
                 # ── Pallet boundary detection (before sleep) ──────────────────
-                # Read D3300 (REMAINING = C90 - D3020) and D3002 (C102 pallet no.)
-                # at trigger time, before the 1 s sleep.
-                #
-                # D3300 counts -pallet_size → -1 within each pallet, then resets.
-                # D3300 = 0 means the pallet just became full (C90 == D3020).
-                # The NEXT item after D3300=0 will have D3300 < 0 — that item
-                # is the FIRST of the NEW pallet.
-                #
-                # C102 (D3002) only increments 2 s later via T49.  Using D3300's
-                # zero-crossing avoids that delay entirely.
                 r_d3002_snap = safe_read(plc, "D3002", 2)
                 r_d3300_snap = safe_read(plc, "D3300", 1)
                 snap_d3002   = r_d3002_snap[0] | (r_d3002_snap[1] << 16)
                 raw_d3300    = r_d3300_snap[0]
                 snap_d3300   = raw_d3300 if raw_d3300 < 32768 else raw_d3300 - 65536
 
-                # Initialise sw_pallet on very first item from the PLC's own counter.
-                # C102 starts at 1 (M29 pre-increments it), so D3002 is already 1-based.
                 if sw_pallet is None:
                     sw_pallet = max(snap_d3002, 1)
 
-                # Boundary: previous item had D3300 = 0 (pallet full) and this
-                # item has D3300 < 0 (C90 reset, new pallet started).
-                # Also catch up if D3002 jumped ahead (e.g. multiple fast pallets).
                 if prev_d3300 is not None and prev_d3300 >= 0 and snap_d3300 < 0:
                     sw_pallet += 1
                 if snap_d3002 > sw_pallet:
-                    sw_pallet = snap_d3002   # sync if PLC is ahead
+                    sw_pallet = snap_d3002
 
                 prev_d3300  = snap_d3300
                 snap_pallet = sw_pallet
 
-                # ── Pallet change: flush OLD pallet BEFORE adding this item ───
-                # This item belongs to snap_pallet. If that changed, the old
-                # pallet's PDF must be written first so this item goes to the new one.
                 pallet_changed = (last_pallet is not None and
                                   snap_pallet != last_pallet)
                 if pallet_changed:
                     print(f"\n  *** PALLET CHANGED: {last_pallet} → {snap_pallet} ***")
-                    write_and_close_csv()   # flushes old pallet without this item
+                    write_and_close_csv()
                     item_count = 1
                     accepted   = 1 if ok_wgt else 0
                     rejected   = 0 if ok_wgt else 1
@@ -410,17 +448,14 @@ def main():
                     data["read_weight"] = "ERR"
                     data["barcode"]     = ""
 
-                # Status from trigger bit; pallet from software counter
                 data["status"]   = reason
                 data["pallet_no"] = snap_pallet
                 data["pallet"]    = snap_pallet
                 batch_data = data
 
-                # Capture batch start time on first item of each pallet
                 if not batch_start_dt:
                     batch_start_dt = data.get("datetime", _now_str())
 
-                # Per-item row
                 row = {
                     "item_no"        : item_count,
                     "pallet_no"      : snap_pallet,
@@ -443,56 +478,47 @@ def main():
                 display(data, item_count, reason, accepted, rejected)
                 last_status = reason
 
-                # Broadcast item event to kiosk
                 try:
                     pw_f = float(data.get("product_weight", 0) or 0)
                     rw_f = float(data.get("read_weight", 0) or 0)
                 except (ValueError, TypeError):
                     pw_f = rw_f = 0.0
-                _write_kiosk({
-                    "ts":           time.time(),
-                    "source":       "reader",
-                    "plc_connected": True,
-                    "running":      True,
-                    "weight":       rw_f,
-                    "target":       pw_f,
-                    "lower_limit":  lower_lim,
-                    "upper_limit":  upper_lim,
-                    "status":       reason,
-                    "total":        item_count,
-                    "accept":       accepted,
-                    "reject":       rejected,
-                    "batch_no":     data.get("batch_no", 0),
-                    "product_name": data.get("product_name", ""),
-                    "operator_id":  data.get("operator_id", ""),
-                    "machine":      data.get("machine", "CW-2400") or "CW-2400",
-                    "pallet_no":    snap_pallet,
-                    "lot_no":       data.get("lot_no", 0),
-                    "item_event": {
-                        "ts":            time.time(),
-                        "type":          "item",
-                        "item_no":       item_count,
-                        "weight":        rw_f,
-                        "target":        pw_f,
-                        "status":        reason,
-                        "read_weight":   data.get("read_weight", ""),
-                        "product_weight":data.get("product_weight", ""),
-                        "barcode":       data.get("barcode", ""),
-                        "product_name":  data.get("product_name", ""),
-                        "operator_id":   data.get("operator_id", ""),
-                        "batch_no":      data.get("batch_no", 0),
-                        "datetime":      data.get("datetime", ""),
-                        "pallet_no":     snap_pallet,
-                        "lot_no":        data.get("lot_no", 0),
-                        "total":         item_count,
-                        "accept":        accepted,
-                        "reject":        rejected,
-                    },
-                })
+
+                # Stage the item event — written to kiosk in the live state write
+                # below, where it stays for ITEM_EVENT_TTL_CYCLES × 50 ms so the
+                # SSE stream (250 ms poll) is guaranteed to see it.
+                pending_item_event = {
+                    "ts":            time.time(),
+                    "type":          "item",
+                    "item_no":       item_count,
+                    "weight":        rw_f,
+                    "target":        pw_f,
+                    "status":        reason,
+                    "read_weight":   data.get("read_weight", ""),
+                    "product_weight":data.get("product_weight", ""),
+                    "barcode":       data.get("barcode", ""),
+                    "product_name":  data.get("product_name", ""),
+                    "operator_id":   data.get("operator_id", ""),
+                    "batch_no":      data.get("batch_no", 0),
+                    "datetime":      data.get("datetime", ""),
+                    "pallet_no":     snap_pallet,
+                    "lot_no":        data.get("lot_no", 0),
+                    "total":         item_count,
+                    "accept":        accepted,
+                    "reject":        rejected,
+                }
+                item_event_ttl = ITEM_EVENT_TTL_CYCLES
 
             prev_m102, prev_m260, prev_m262, prev_m200 = m102, m260, m262, m200
 
             # ── Write live state for kiosk dashboard ──────────────────────────
+            # Item event is included for ITEM_EVENT_TTL_CYCLES cycles after each
+            # item so the SSE stream sees it.  Cleared to None once TTL expires.
+            if item_event_ttl > 0:
+                item_event_ttl -= 1
+                if item_event_ttl == 0:
+                    pending_item_event = None
+
             if m102 or item_count > 0:
                 last_status = "RUNNING" if m102 else "IDLE"
             _write_kiosk({
@@ -514,7 +540,7 @@ def main():
                 "machine":      batch_data.get("machine", "CW-2400") or "CW-2400",
                 "pallet_no":    batch_data.get("pallet_no", 0),
                 "lot_no":       batch_data.get("lot_no", 0),
-                "item_event":   None,
+                "item_event":   pending_item_event,
             })
 
             elapsed = time.monotonic() - t0

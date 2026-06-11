@@ -17,6 +17,10 @@ LIVE_STATE_PATH = "/tmp/plc_live.json"
 REPORTS_DIR = "/home/pi/reports"
 PORT = 8080
 
+# If plc_live.json timestamp is older than this, treat as OFFLINE.
+# Catches watcher/reader crashes before systemd can restart them (~5 s).
+STALE_SECONDS = 5.0
+
 app = Flask(__name__)
 
 
@@ -73,14 +77,27 @@ def live_dashboard():
     return render_template("live.html")
 
 
-@app.route("/api/live")
-def api_live():
+_OFFLINE_STATE = {"plc_connected": False, "running": False,
+                  "status": "OFFLINE", "item_event": None}
+
+
+def _load_live_state() -> dict:
+    """Read plc_live.json; return OFFLINE state if missing, unreadable, or stale."""
     try:
         with open(LIVE_STATE_PATH) as f:
-            return Response(f.read(), mimetype="application/json")
-    except (FileNotFoundError, OSError):
-        return jsonify({"plc_connected": False, "running": False,
-                        "status": "OFFLINE", "item_event": None})
+            state = json.load(f)
+        if time.time() - state.get("ts", 0) > STALE_SECONDS:
+            # Watcher or reader crashed — systemd will restart but not yet.
+            state = dict(_OFFLINE_STATE)
+            state["ts"] = time.time()
+        return state
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return dict(_OFFLINE_STATE)
+
+
+@app.route("/api/live")
+def api_live():
+    return Response(json.dumps(_load_live_state()), mimetype="application/json")
 
 
 @app.route("/live-events")
@@ -95,12 +112,7 @@ def live_events():
         while True:
             time.sleep(0.25)
             tick += 1
-            try:
-                with open(LIVE_STATE_PATH) as f:
-                    state = json.load(f)
-            except (FileNotFoundError, json.JSONDecodeError, OSError):
-                state = {"plc_connected": False, "running": False,
-                         "status": "OFFLINE", "item_event": None}
+            state = _load_live_state()
 
             item_ev   = state.get("item_event")
             item_ts   = item_ev.get("ts") if item_ev else None

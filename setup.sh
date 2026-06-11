@@ -32,6 +32,7 @@ REPO_URL="https://github.com/Bibin-VR/plc-checkweigher.git"
 REPO_BRANCH="main"
 HOME_DIR="/home/${PI_USER}"
 INSTALL_DIR="${HOME_DIR}/plc_checkweigher"
+DATA_DIR="${INSTALL_DIR}/data"        # pi-writable: queue, log, smb_config
 VENV_DIR="${HOME_DIR}/plc_env"
 REPORTS_DIR="${HOME_DIR}/reports"
 BOOT_FW="/boot/firmware"
@@ -107,15 +108,20 @@ install_system_packages() {
 # ── 2. Clone / update repo ────────────────────────────────────────────────────
 setup_repo() {
     step "Repository ..."
+    # Mark safe so git operations work regardless of ownership state.
+    git config --global --add safe.directory "${INSTALL_DIR}" 2>/dev/null || true
+
     if [[ -d "${INSTALL_DIR}/.git" ]]; then
-        sudo -u "${PI_USER}" git -C "${INSTALL_DIR}" pull --ff-only origin "${REPO_BRANCH}" \
+        # Temporarily unlock so git can write index / pack files.
+        chown -R root:root "${INSTALL_DIR}" 2>/dev/null || true
+        git -C "${INSTALL_DIR}" pull --ff-only origin "${REPO_BRANCH}" \
             && ok "Repo updated  →  ${INSTALL_DIR}" \
             || warn "git pull failed — using existing files"
     else
-        sudo -u "${PI_USER}" git clone --branch "${REPO_BRANCH}" \
-            "${REPO_URL}" "${INSTALL_DIR}"
+        git clone --branch "${REPO_BRANCH}" "${REPO_URL}" "${INSTALL_DIR}"
         ok "Repo cloned  →  ${INSTALL_DIR}"
     fi
+    # Permissions are finalised by lock_source_files() later.
 }
 
 # ── 3. Python venv ────────────────────────────────────────────────────────────
@@ -135,6 +141,13 @@ setup_dirs() {
     mkdir -p "${REPORTS_DIR}"
     chown "${PI_USER}:${PI_USER}" "${REPORTS_DIR}"
     ok "${REPORTS_DIR}"
+
+    # pi-writable data directory — queue, delivery log, SMB credentials live here.
+    # Source files above this directory are root-locked after install_services().
+    mkdir -p "${DATA_DIR}"
+    chown "${PI_USER}:${PI_USER}" "${DATA_DIR}"
+    chmod 755 "${DATA_DIR}"
+    ok "${DATA_DIR}  (runtime data — pi-writable)"
 }
 
 # ── CLI tool — install plc_checkweigher command ───────────────────────────────
@@ -253,8 +266,8 @@ setup_smb() {
     prompt SMB_HOST     "Host IP address"   ""
     if [[ -z "${SMB_HOST}" ]]; then
         warn "SMB push disabled — no host entered."
-        # Write a disabled smb_config.py
-        cat > "${INSTALL_DIR}/smb_config.py" << 'EOF'
+        # Write a disabled smb_config.py to the pi-writable data/ directory.
+        cat > "${DATA_DIR}/smb_config.py" << 'EOF'
 # SMB push disabled during setup
 SMB_ENABLED  = False
 SMB_HOST     = ""
@@ -263,7 +276,7 @@ SMB_USERNAME = ""
 SMB_PASSWORD = ""
 SMB_SUBDIR   = ""
 EOF
-        chown "${PI_USER}:${PI_USER}" "${INSTALL_DIR}/smb_config.py"
+        chown "${PI_USER}:${PI_USER}" "${DATA_DIR}/smb_config.py"
         return
     fi
 
@@ -275,8 +288,9 @@ EOF
     hr
     echo ""
 
-    # Write smb_config.py (gitignored — credentials stay off GitHub)
-    cat > "${INSTALL_DIR}/smb_config.py" << EOF
+    # Write smb_config.py to data/ (gitignored — credentials stay off GitHub).
+    # Stored in data/ so the pi user can update it via: plc_checkweigher smb-config
+    cat > "${DATA_DIR}/smb_config.py" << EOF
 # SMB configuration — written by setup.sh, NOT committed to git.
 SMB_ENABLED  = True
 SMB_HOST     = "${SMB_HOST}"
@@ -285,8 +299,8 @@ SMB_USERNAME = "${SMB_USERNAME}"
 SMB_PASSWORD = "${SMB_PASSWORD}"
 SMB_SUBDIR   = "${SMB_SUBDIR}"
 EOF
-    chown "${PI_USER}:${PI_USER}" "${INSTALL_DIR}/smb_config.py"
-    ok "SMB config saved  →  ${INSTALL_DIR}/smb_config.py"
+    chown "${PI_USER}:${PI_USER}" "${DATA_DIR}/smb_config.py"
+    ok "SMB config saved  →  ${DATA_DIR}/smb_config.py"
 
     # Test connectivity
     echo -n "  Testing connection to ${SMB_HOST} ..."
@@ -575,6 +589,58 @@ EOF
     ok "vscode-priority.service  (cores 0-2, Nice=-5) — starts on every boot"
 }
 
+# ── 11c. Lock source files — root:root 644 (requires sudo to edit) ────────────
+lock_source_files() {
+    step "Protecting source files ..."
+
+    # Source files: root:root 644 — readable+executable by all, editable by root only.
+    find "${INSTALL_DIR}" -maxdepth 1 -name "*.py" -exec chown root:root {} \; \
+                                                    -exec chmod 644 {} \;
+    find "${INSTALL_DIR}/web" -name "*.py" -exec chown root:root {} \; \
+                                           -exec chmod 644 {} \; 2>/dev/null || true
+    find "${INSTALL_DIR}/web/templates" -name "*.html" -exec chown root:root {} \; \
+                                                        -exec chmod 644 {} \; 2>/dev/null || true
+    find "${INSTALL_DIR}/web/static" -type f -exec chown root:root {} \; \
+                                             -exec chmod 644 {} \; 2>/dev/null || true
+
+    # Directories: root:root 755 — pi can list/cd but cannot create new files.
+    chown root:root "${INSTALL_DIR}"
+    chmod 755 "${INSTALL_DIR}"
+    [[ -d "${INSTALL_DIR}/web" ]]          && chown root:root "${INSTALL_DIR}/web"           && chmod 755 "${INSTALL_DIR}/web"
+    [[ -d "${INSTALL_DIR}/web/templates" ]] && chown root:root "${INSTALL_DIR}/web/templates" && chmod 755 "${INSTALL_DIR}/web/templates"
+    [[ -d "${INSTALL_DIR}/web/static" ]]   && chown root:root "${INSTALL_DIR}/web/static"    && chmod 755 "${INSTALL_DIR}/web/static"
+    [[ -d "${INSTALL_DIR}/assets" ]]       && chown root:root "${INSTALL_DIR}/assets"         && chmod 755 "${INSTALL_DIR}/assets"
+    [[ -d "${INSTALL_DIR}/bin" ]]          && chown root:root "${INSTALL_DIR}/bin"             && chmod 755 "${INSTALL_DIR}/bin"
+
+    # service files and scripts: root:root, readable
+    find "${INSTALL_DIR}" -maxdepth 2 -name "*.service" -exec chown root:root {} \; \
+                                                         -exec chmod 644 {} \; 2>/dev/null || true
+    find "${INSTALL_DIR}" -maxdepth 2 -name "*.sh" -exec chown root:root {} \; \
+                                                    -exec chmod 755 {} \; 2>/dev/null || true
+
+    # Data directory: pi-owned 755 — services write queue, log, smb_config here.
+    chown "${PI_USER}:${PI_USER}" "${DATA_DIR}"
+    chmod 755 "${DATA_DIR}"
+
+    # Pre-create data files with correct ownership so pi can write on first run.
+    local queue="${DATA_DIR}/delivery_queue.json"
+    local log="${DATA_DIR}/delivery_sent.log"
+    [[ -f "${queue}" ]] || echo '[]' > "${queue}"
+    [[ -f "${log}"   ]] || touch "${log}"
+    chown "${PI_USER}:${PI_USER}" "${queue}" "${log}"
+    chmod 644 "${queue}" "${log}"
+
+    # smb_config.py in data/ stays pi-owned so plc_checkweigher smb-config can update it.
+    [[ -f "${DATA_DIR}/smb_config.py" ]] && \
+        chown "${PI_USER}:${PI_USER}" "${DATA_DIR}/smb_config.py" && \
+        chmod 644 "${DATA_DIR}/smb_config.py"
+
+    ok "Source files locked  (root:root 644 — sudo required to edit)"
+    ok "Data dir writable    ${DATA_DIR}  (queue / log / smb_config)"
+    info "To update source:  sudo nano ${INSTALL_DIR}/plc_reader.py"
+    info "To update SMB:     plc_checkweigher smb-config  (no sudo needed)"
+}
+
 # ── 12. RT kernel — installed LAST so only one reboot is needed ───────────────
 install_rt_kernel() {
     step "PREEMPT_RT kernel  (final step before reboot) ..."
@@ -634,10 +700,11 @@ do_reboot() {
     banner "Setup Complete"
     echo ""
     PI_IP="$(hostname -I | awk '{print $1}' 2>/dev/null || echo '<pi-ip>')"
-    printf "  ${G}%-32s${NC} %s\n"  "Repo:"                  "${INSTALL_DIR}"
+    printf "  ${G}%-32s${NC} %s\n"  "Source (root-locked):"  "${INSTALL_DIR}"
+    printf "  ${G}%-32s${NC} %s\n"  "Data (pi-writable):"   "${DATA_DIR}"
     printf "  ${G}%-32s${NC} %s\n"  "Python venv:"           "${VENV_DIR}"
     printf "  ${G}%-32s${NC} %s\n"  "Reports output:"        "${REPORTS_DIR}"
-    printf "  ${G}%-32s${NC} %s\n"  "SMB config:"            "${INSTALL_DIR}/smb_config.py"
+    printf "  ${G}%-32s${NC} %s\n"  "SMB config:"            "${DATA_DIR}/smb_config.py"
     printf "  ${G}%-32s${NC} %s\n"  "RT kernel:"             "kernel8-rt.img  (active after reboot)"
     printf "  ${G}%-32s${NC} %s\n"  "Stock kernel fallback:" "kernel8-stock.img"
     echo ""
@@ -682,6 +749,7 @@ main() {
     setup_boot_logo           # 10 — Plymouth: logo + "SAI SAMARTH ENGG"
     setup_display             # 11 — LightDM priority, CPU isolation, utmpx
     setup_vscode_priority     # 11b — VS Code: cores 0-2, Nice=-5
+    lock_source_files         # 11c — root:root on .py, pi:pi on data/
     install_rt_kernel         # 12 — LAST, so only one reboot needed
     do_reboot                 # 12 — single reboot applies everything
 }

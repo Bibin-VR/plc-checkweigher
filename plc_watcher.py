@@ -18,9 +18,15 @@ import time
 from pymcprotocol import Type3E
 
 PLC_IP            = "192.168.3.250"
+_READER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plc_reader.py")
 PLC_PORT          = 1025
 BIT_POLL          = 0.05   # 50 ms
 KIOSK_STATE_PATH  = "/tmp/plc_live.json"
+
+# Minimum consecutive successful M102 polls before writing IDLE heartbeat.
+# Prevents OFFLINE→IDLE→OFFLINE flicker when the PLC ethernet is unreliable.
+# 60 × 50 ms = 3 seconds of stable connection required before showing IDLE.
+STABLE_THRESHOLD = 60
 
 
 def _write_kiosk(data: dict):
@@ -44,6 +50,11 @@ def connect() -> Type3E:
             return plc
         except Exception as e:
             print(f"[watcher] Connection failed: {e}  — retry in 5 s")
+            # Keep kiosk OFFLINE during every retry so the dashboard never shows
+            # a stale state while the watcher is trying to reconnect.
+            _write_kiosk({"ts": time.time(), "source": "watcher",
+                           "plc_connected": False, "running": False,
+                           "status": "OFFLINE", "item_event": None})
             time.sleep(5)
 
 
@@ -57,13 +68,33 @@ def run_reader(plc):
         plc.close()
     except Exception:
         pass
-    proc = subprocess.Popen(
-        [sys.executable, "/home/pi/plc_checkweigher/plc_reader.py"]
-    )
+    proc = subprocess.Popen([sys.executable, _READER])
     proc.wait()
     print(f"\n[watcher] plc_reader.py exited (code {proc.returncode})")
     print("[watcher] Reconnecting — waiting for next START ...\n")
     return connect()
+
+
+def launch_reader_loop(plc):
+    """
+    Run plc_reader.py and re-launch it if the machine is still ON when it exits.
+
+    Without this loop, a reader exit while M102=1 leaves prev_m102=1 in the
+    watcher's main loop.  The next iteration sees m102=1, prev_m102=1 →
+    no rising edge → reader never re-launched → machine ON but no data collected.
+
+    Returns (plc, 0) — guarantees prev_m102=0 so the main loop edge-detects
+    correctly on the next START press.
+    """
+    while True:
+        plc = run_reader(plc)
+        try:
+            m102_after = read_m102(plc)
+        except Exception:
+            m102_after = 0
+        if not m102_after:
+            return plc, 0
+        print("[watcher] Machine still ON after reader exit — relaunching plc_reader.py ...\n")
 
 
 def main():
@@ -77,26 +108,27 @@ def main():
     print(f"[watcher] M102 initial state = {prev_m102}  "
           f"({'RUNNING' if prev_m102 else 'STOPPED'})\n")
 
-    # If machine is already running when watcher starts, launch reader immediately
+    # Machine already running when watcher starts — launch reader immediately.
     if prev_m102:
         print("[watcher] Machine already running — launching plc_reader.py ***\n")
-        plc = run_reader(plc)
-        try:
-            prev_m102 = read_m102(plc)
-        except Exception:
-            prev_m102 = 0
+        plc, prev_m102 = launch_reader_loop(plc)
 
-    _hb = 0   # heartbeat counter — write kiosk idle state once per second
+    _hb          = 0   # heartbeat counter — 20 × 50 ms = 1 s
+    stable_polls = 0   # consecutive successful M102 reads since last connect/reconnect
+
     while True:
         time.sleep(BIT_POLL)
 
         try:
             m102 = read_m102(plc)
+            stable_polls += 1
         except Exception as e:
             print(f"[watcher] Connection lost: {e}  — reconnecting ...")
+            stable_polls = 0
+            _hb = 0
             _write_kiosk({"ts": time.time(), "source": "watcher",
-                          "plc_connected": False, "running": False,
-                          "status": "OFFLINE", "item_event": None})
+                           "plc_connected": False, "running": False,
+                           "status": "OFFLINE", "item_event": None})
             try:
                 plc.close()
             except Exception:
@@ -108,30 +140,26 @@ def main():
                 prev_m102 = 0
             if prev_m102:
                 print("[watcher] Machine running after reconnect — launching plc_reader.py ***\n")
-                plc = run_reader(plc)
-                try:
-                    prev_m102 = read_m102(plc)
-                except Exception:
-                    prev_m102 = 0
+                plc, prev_m102 = launch_reader_loop(plc)
             continue
 
-        # Write idle heartbeat once per second so the kiosk knows PLC is alive
+        # Write idle heartbeat once per second, but only after STABLE_THRESHOLD
+        # consecutive successful polls (3 s) to avoid OFFLINE→IDLE→OFFLINE flicker
+        # on a flaky connection.
         _hb += 1
-        if _hb >= 20:   # 20 × 50 ms = 1 s
+        if _hb >= 20 and stable_polls >= STABLE_THRESHOLD:
             _hb = 0
             _write_kiosk({"ts": time.time(), "source": "watcher",
-                          "plc_connected": True, "running": bool(m102),
-                          "status": "IDLE" if not m102 else "RUNNING",
-                          "item_event": None})
+                           "plc_connected": True, "running": bool(m102),
+                           "status": "IDLE" if not m102 else "RUNNING",
+                           "item_event": None})
 
         # Rising edge on M102 = START pressed
         if m102 and not prev_m102:
             print("[watcher] *** START detected — launching plc_reader.py ***\n")
-            plc = run_reader(plc)
-            try:
-                prev_m102 = read_m102(plc)
-            except Exception:
-                prev_m102 = 0
+            stable_polls = 0
+            _hb = 0
+            plc, prev_m102 = launch_reader_loop(plc)
         else:
             prev_m102 = m102
 

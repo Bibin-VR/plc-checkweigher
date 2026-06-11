@@ -6,7 +6,8 @@ set -euo pipefail
 
 INSTALL_DIR="/home/pi/plc_checkweigher"
 PYTHON="/home/pi/plc_env/bin/python3"
-SMB_CFG="${INSTALL_DIR}/smb_config.py"
+DATA_DIR="${INSTALL_DIR}/data"
+SMB_CFG="${DATA_DIR}/smb_config.py"
 
 # ── TTY detection — animations only when connected to a real terminal ─────────
 [[ -t 1 ]] && _TTY=1 || _TTY=0
@@ -210,8 +211,8 @@ stop)
 queue)
     banner "SMB Delivery Queue"
     echo ""
-    QUEUE="${INSTALL_DIR}/delivery_queue.json"
-    LEDGER="${INSTALL_DIR}/delivery_sent.log"
+    QUEUE="${DATA_DIR}/delivery_queue.json"
+    LEDGER="${DATA_DIR}/delivery_sent.log"
     if [[ -f "$QUEUE" ]]; then
         COUNT=$(python3 -c "import json; d=json.load(open('$QUEUE')); print(len(d))" 2>/dev/null || echo 0)
         if [[ "$COUNT" -eq 0 ]]; then
@@ -587,19 +588,20 @@ smb-config)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FIX — auto-detect and repair common issues
-# Usage: fix [-wifi] [-health] [-programs]   (no flags = run all)
+# Usage: fix [-wifi] [-health] [-programs] [-errors]   (no flags = run all)
 # ─────────────────────────────────────────────────────────────────────────────
 fix)
-    FIX_WIFI=0; FIX_HEALTH=0; FIX_PROGRAMS=0
+    FIX_WIFI=0; FIX_HEALTH=0; FIX_PROGRAMS=0; FIX_ERRORS=0
     if [[ $# -eq 0 ]]; then
-        FIX_WIFI=1; FIX_HEALTH=1; FIX_PROGRAMS=1
+        FIX_WIFI=1; FIX_HEALTH=1; FIX_PROGRAMS=1; FIX_ERRORS=1
     else
         for _flag in "$@"; do
             case "$_flag" in
             -wifi)     FIX_WIFI=1 ;;
             -health)   FIX_HEALTH=1 ;;
             -programs) FIX_PROGRAMS=1 ;;
-            *) warn "Unknown flag: $_flag  (valid: -wifi  -health  -programs)" ;;
+            -errors)   FIX_ERRORS=1 ;;
+            *) warn "Unknown flag: $_flag  (valid: -wifi  -health  -programs  -errors)" ;;
             esac
         done
     fi
@@ -611,7 +613,8 @@ fix)
     [[ $FIX_WIFI     -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}wifi"
     [[ $FIX_HEALTH   -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}health"
     [[ $FIX_PROGRAMS -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}programs"
-    [[ "$_LOG_MODES" == "wifi-health-programs" ]] && _LOG_MODES="all"
+    [[ $FIX_ERRORS   -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}errors"
+    [[ "$_LOG_MODES" == "wifi-health-programs-errors" ]] && _LOG_MODES="all"
     LOG_FILE="${LOG_DIR}/fix_${_LOG_MODES}_$(date '+%Y%m%d_%H%M%S').log"
     flog()      { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
     ffix_ok()   { spin_ok   "$*"; flog "FIXED : $*"; FIX_COUNT=$((FIX_COUNT+1)); }
@@ -620,7 +623,7 @@ fix)
     ffix_err()  { spin_err  "$*"; flog "ERROR : $*"; }
 
     FIX_COUNT=0
-    flog "=== Run started | wifi=${FIX_WIFI} health=${FIX_HEALTH} programs=${FIX_PROGRAMS} ==="
+    flog "=== Run started | wifi=${FIX_WIFI} health=${FIX_HEALTH} programs=${FIX_PROGRAMS} errors=${FIX_ERRORS} ==="
 
     banner "Auto Fix"
     echo ""
@@ -772,9 +775,17 @@ fix)
         fi
 
         spin_start "SMB config file"
+        mkdir -p "${DATA_DIR}" 2>/dev/null || true
         if [[ ! -f "$SMB_CFG" ]]; then
             printf 'SMB_ENABLED  = False\nSMB_HOST     = ""\nSMB_SHARE    = "Reports"\nSMB_USERNAME = ""\nSMB_PASSWORD = ""\nSMB_SUBDIR   = ""\n' \
-                > "$SMB_CFG" 2>/dev/null
+                > "$SMB_CFG" 2>/dev/null || sudo tee "$SMB_CFG" > /dev/null << 'SMBC'
+SMB_ENABLED  = False
+SMB_HOST     = ""
+SMB_SHARE    = "Reports"
+SMB_USERNAME = ""
+SMB_PASSWORD = ""
+SMB_SUBDIR   = ""
+SMBC
             ffix_ok "Created default smb_config.py (disabled — run: plc_checkweigher smb-config)"
         else
             ffix_info "smb_config.py present"
@@ -836,13 +847,14 @@ fix)
         fi
 
         spin_start "Delivery queue"
-        _QUEUE="${INSTALL_DIR}/delivery_queue.json"
+        _QUEUE="${DATA_DIR}/delivery_queue.json"
+        mkdir -p "${DATA_DIR}" 2>/dev/null || true
         if [[ ! -f "$_QUEUE" ]]; then
-            echo "[]" > "$_QUEUE"
+            echo "[]" > "$_QUEUE" 2>/dev/null || true
             ffix_ok "Created missing delivery_queue.json"
         elif ! "${PYTHON}" -c "import json; json.load(open('${_QUEUE}'))" &>/dev/null 2>&1; then
             mv "$_QUEUE" "${_QUEUE}.broken.$(date +%s)" 2>/dev/null || true
-            echo "[]" > "$_QUEUE"
+            echo "[]" > "$_QUEUE" 2>/dev/null || true
             ffix_ok "Corrupt delivery queue reset (backup saved)"
         else
             ffix_info "delivery_queue.json valid"
@@ -863,6 +875,216 @@ fix)
             ffix_ok "Restored:${_RESTORED}"
         else
             ffix_info "Unit files present"
+        fi
+
+        echo ""
+    fi
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ERRORS — journal scan, RT scheduling, permissions, PLC reach, config validity
+    # ─────────────────────────────────────────────────────────────────────────
+    if [[ $FIX_ERRORS -eq 1 ]]; then
+        echo -e "  ${B}▸ Programmatic Errors${NC}"; hr; echo ""
+
+        # ── 1. Service restart / crash count ─────────────────────────────────
+        spin_start "Service stability"
+        _SVC_STABLE=1
+        for _svc in plc_watcher plc_web; do
+            _RC=$(systemctl show -p NRestarts --value "$_svc" 2>/dev/null || echo "0")
+            _RC="${_RC:-0}"
+            if [[ "$_RC" =~ ^[0-9]+$ && "$_RC" -gt 10 ]]; then
+                _spin_kill
+                ffix_warn "${_svc}: ${_RC} restarts — likely crash loop"
+                flog "WARN: ${_svc} restart count=${_RC}"
+                _SVC_STABLE=0
+            elif [[ "$_RC" =~ ^[0-9]+$ && "$_RC" -gt 3 ]]; then
+                _spin_kill
+                ffix_warn "${_svc}: ${_RC} restart(s) since last boot"
+                flog "WARN: ${_svc} restart count=${_RC}"
+                _SVC_STABLE=0
+            fi
+        done
+        [[ $_SVC_STABLE -eq 1 ]] && ffix_info "Both services stable (low restart count)"
+
+        # ── 2. Journal error scan — last 2 hours ─────────────────────────────
+        spin_start "Scanning journal for errors (last 2 h)"
+        _J_RAW=$(journalctl -u plc_watcher -u plc_web --since "2 hours ago" \
+                     --no-pager -q 2>/dev/null \
+                 | grep -iE \
+                   '(Traceback|ImportError|ModuleNotFoundError|SyntaxError|PermissionError|FileNotFoundError|JSONDecodeError|OSError|ConnectionRefusedError|TimeoutError|CRITICAL|FATAL)' \
+                 | grep -v '^-- Logs begin' \
+                 | tail -30 || true)
+
+        if [[ -n "$_J_RAW" ]]; then
+            _spin_kill
+            warn "Errors found in recent journal:"
+            while IFS= read -r _line; do
+                # Trim to 110 chars for display
+                printf "     ${R}│${NC} ${D}%.110s${NC}\n" "$_line"
+                flog "JOURNAL: $_line"
+            done <<< "$_J_RAW"
+            echo ""
+
+            # ── Auto-fix: missing Python module ──────────────────────────────
+            _MISSING_MOD=$(echo "$_J_RAW" \
+                | grep -oP "No module named ['\"]?\K[a-zA-Z0-9_]+" | head -1 || true)
+            if [[ -n "$_MISSING_MOD" ]]; then
+                spin_start "Auto-fix: installing missing module '${_MISSING_MOD}'"
+                if "${PYTHON}" -m pip install "${_MISSING_MOD}" -q 2>/dev/null; then
+                    ffix_ok "pip installed: ${_MISSING_MOD}"
+                    sudo systemctl restart plc_watcher plc_web 2>/dev/null || true
+                    ffix_ok "Services restarted after module install"
+                else
+                    ffix_warn "pip install failed for: ${_MISSING_MOD} — try manually"
+                fi
+            fi
+
+            # ── Auto-fix: corrupt delivery_queue.json ─────────────────────────
+            if echo "$_J_RAW" | grep -q "JSONDecodeError"; then
+                _QFILE="${DATA_DIR}/delivery_queue.json"
+                if [[ -f "$_QFILE" ]]; then
+                    spin_start "Auto-fix: resetting corrupt delivery queue"
+                    cp "$_QFILE" "${_QFILE}.broken.$(date +%s)" 2>/dev/null || true
+                    echo "[]" > "$_QFILE"
+                    ffix_ok "delivery_queue.json reset (broken copy saved)"
+                fi
+            fi
+
+            # ── Auto-fix: PermissionError on data/ files ──────────────────────
+            if echo "$_J_RAW" | grep -q "PermissionError"; then
+                spin_start "Auto-fix: correcting data/ permissions"
+                sudo chown pi:pi "${DATA_DIR}" 2>/dev/null || true
+                sudo chmod 755 "${DATA_DIR}" 2>/dev/null || true
+                sudo chown pi:pi "${DATA_DIR}"/* 2>/dev/null || true
+                sudo chmod 644 "${DATA_DIR}"/* 2>/dev/null || true
+                ffix_ok "data/ ownership set to pi:pi 755/644"
+            fi
+
+            # ── Auto-fix: FileNotFoundError on a data/ file ───────────────────
+            if echo "$_J_RAW" | grep -q "FileNotFoundError.*data"; then
+                spin_start "Auto-fix: recreating missing data files"
+                mkdir -p "${DATA_DIR}" 2>/dev/null || true
+                [[ -f "${DATA_DIR}/delivery_queue.json" ]] \
+                    || echo "[]" > "${DATA_DIR}/delivery_queue.json"
+                [[ -f "${DATA_DIR}/delivery_sent.log"   ]] \
+                    || touch "${DATA_DIR}/delivery_sent.log"
+                chown pi:pi "${DATA_DIR}"/* 2>/dev/null || true
+                ffix_ok "Missing data files recreated"
+            fi
+
+        else
+            ffix_info "No Python exceptions in recent logs"
+        fi
+
+        # ── 3. RT scheduling verification ─────────────────────────────────────
+        spin_start "RT scheduling (plc_watcher)"
+        _WPD=$(systemctl show -p MainPID --value plc_watcher 2>/dev/null || echo "0")
+        _WPD="${_WPD//[^0-9]/}"
+        if [[ "${_WPD:-0}" -gt 0 ]]; then
+            _SCHED=$(chrt -p "$_WPD" 2>/dev/null || echo "")
+            if echo "$_SCHED" | grep -q "SCHED_FIFO"; then
+                _PRIO=$(echo "$_SCHED" | grep -oP 'priority: \K\d+' || echo "?")
+                _AFF=$(taskset -cp "$_WPD" 2>/dev/null | grep -oP 'list: \K.*' || echo "?")
+                ffix_info "SCHED_FIFO:${_PRIO}  cpus:${_AFF}  pid:${_WPD}"
+                flog "INFO: plc_watcher SCHED_FIFO:${_PRIO} cpu:${_AFF}"
+            else
+                ffix_warn "RT scheduling not active — reloading unit and restarting"
+                flog "WARN: plc_watcher not SCHED_FIFO: ${_SCHED}"
+                sudo systemctl daemon-reload 2>/dev/null || true
+                sudo systemctl restart plc_watcher 2>/dev/null && ffix_ok "Service restarted" || ffix_err "Restart failed"
+            fi
+        else
+            ffix_warn "plc_watcher not running — cannot check RT scheduling"
+        fi
+
+        # ── 4. data/ directory writability ────────────────────────────────────
+        spin_start "data/ directory"
+        if [[ ! -d "${DATA_DIR}" ]]; then
+            sudo mkdir -p "${DATA_DIR}" 2>/dev/null || true
+            sudo chown pi:pi "${DATA_DIR}" && sudo chmod 755 "${DATA_DIR}"
+            ffix_ok "Created missing data/"
+        elif [[ ! -w "${DATA_DIR}" ]]; then
+            sudo chown pi:pi "${DATA_DIR}" && sudo chmod 755 "${DATA_DIR}"
+            ffix_ok "Fixed data/ permissions (was not writable by pi)"
+            flog "FIXED: data/ was not writable — corrected to pi:pi 755"
+        else
+            ffix_info "data/ writable by pi"
+        fi
+
+        # ── 5. smb_config.py syntax ───────────────────────────────────────────
+        spin_start "smb_config.py syntax"
+        if [[ -f "${SMB_CFG}" ]]; then
+            _SMB_ERR=$("${PYTHON}" -c "import ast; ast.parse(open('${SMB_CFG}').read())" 2>&1 || true)
+            if [[ -n "${_SMB_ERR}" ]]; then
+                flog "ERROR: smb_config.py syntax: ${_SMB_ERR}"
+                ffix_warn "smb_config.py has syntax errors — resetting to disabled"
+                printf 'SMB_ENABLED  = False\nSMB_HOST     = ""\nSMB_SHARE    = "Reports"\nSMB_USERNAME = ""\nSMB_PASSWORD = ""\nSMB_SUBDIR   = ""\n' \
+                    > "${SMB_CFG}" 2>/dev/null || true
+                ffix_ok "smb_config.py reset — run: plc_checkweigher smb-config"
+            else
+                _SMB_EN=$(grep "^SMB_ENABLED" "${SMB_CFG}" 2>/dev/null \
+                    | grep -qi "true" && echo "enabled" || echo "disabled")
+                _SMB_H=$(smb_get "SMB_HOST")
+                ffix_info "smb_config.py valid  (SMB: ${_SMB_EN}${_SMB_H:+  →  ${_SMB_H}})"
+            fi
+        else
+            ffix_warn "smb_config.py missing — run: plc_checkweigher smb-config"
+            flog "WARN: smb_config.py not found at ${SMB_CFG}"
+        fi
+
+        # ── 6. Source file protection (root:root 644) ─────────────────────────
+        spin_start "Source file protection"
+        _WRONG=$(find "${INSTALL_DIR}" -maxdepth 1 -name "*.py" \
+                     ! -user root 2>/dev/null | wc -l || echo 0)
+        if [[ "${_WRONG:-0}" -gt 0 ]]; then
+            ffix_warn "${_WRONG} source .py file(s) not root-owned — locking"
+            flog "WARN: ${_WRONG} source file(s) had wrong owner"
+            sudo find "${INSTALL_DIR}" -maxdepth 1 -name "*.py" \
+                -exec chown root:root {} \; -exec chmod 644 {} \; 2>/dev/null || true
+            sudo find "${INSTALL_DIR}/web" -name "*.py" \
+                -exec chown root:root {} \; -exec chmod 644 {} \; 2>/dev/null || true
+            ffix_ok "Source files re-locked to root:root 644"
+        else
+            ffix_info "Source files protected (root:root 644)"
+        fi
+
+        # ── 7. PLC TCP reachability ───────────────────────────────────────────
+        spin_start "PLC TCP connection (192.168.3.250:1025)"
+        if timeout 3 bash -c "echo >/dev/tcp/192.168.3.250/1025" 2>/dev/null; then
+            ffix_info "PLC reachable at 192.168.3.250:1025"
+        else
+            ffix_warn "PLC not reachable at 192.168.3.250:1025"
+            flog "WARN: PLC TCP connect failed (192.168.3.250:1025)"
+            echo ""
+            info "Possible causes:"
+            info "  • eth0 cable unplugged              (check: ip link show eth0)"
+            info "  • PLC powered off / not ready"
+            info "  • SLMP not enabled in GX Works      (Enable SLMP TCP port 1025)"
+            info "  • Wrong subnet on eth0              (should be 192.168.3.x)"
+            echo ""
+        fi
+
+        # ── 8. plc_live.json staleness ────────────────────────────────────────
+        spin_start "Live state file (/tmp/plc_live.json)"
+        if [[ -f "/tmp/plc_live.json" ]]; then
+            _AGE=$(( $(date +%s) - $(stat -c %Y /tmp/plc_live.json 2>/dev/null || echo 0) ))
+            if [[ "${_AGE:-0}" -gt 10 ]]; then
+                ffix_warn "plc_live.json is ${_AGE}s old — watcher may be stuck or offline"
+                flog "WARN: plc_live.json stale (${_AGE}s old)"
+            else
+                ffix_info "plc_live.json updated ${_AGE}s ago  (OK)"
+            fi
+        else
+            ffix_info "plc_live.json absent  (normal — created when watcher connects)"
+        fi
+
+        # ── 9. reader script path ─────────────────────────────────────────────
+        spin_start "plc_reader.py present"
+        if [[ ! -f "${INSTALL_DIR}/plc_reader.py" ]]; then
+            ffix_err "plc_reader.py missing — watcher cannot launch it"
+            flog "ERROR: plc_reader.py not found at ${INSTALL_DIR}/plc_reader.py"
+        else
+            ffix_info "plc_reader.py present and readable"
         fi
 
         echo ""
@@ -1063,7 +1285,7 @@ uninstall)
     # ── 9. Project code ──────────────────────────────────────────────────────
     ustep "Removing project code"
     if [[ -d "$INSTALL_DIR" ]]; then
-        rm -rf "$INSTALL_DIR" && spin_ok "Removed ${INSTALL_DIR}"
+        sudo rm -rf "$INSTALL_DIR" && spin_ok "Removed ${INSTALL_DIR}"
     else
         spin_ok "Already gone"
     fi
@@ -1148,6 +1370,7 @@ help|--help|-h)
     echo "    fix -wifi                  Fix WiFi connectivity only"
     echo "    fix -health                Fix disk, memory, time, dirs"
     echo "    fix -programs              Fix services, packages, queue, unit files"
+    echo "    fix -errors                Scan journal, verify RT/permissions/PLC/config"
     echo "    logs                       Stream live logs (plc_watcher + plc_web)"
     echo "    queue                      Show SMB pending queue and delivery ledger"
     echo ""

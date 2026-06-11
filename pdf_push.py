@@ -52,7 +52,14 @@ SMB_USERNAME = ""
 SMB_PASSWORD = ""
 SMB_SUBDIR   = ""
 
-# Per-deployment credentials — written by setup.sh, never committed to git.
+# Per-deployment credentials — written by setup.sh to data/, never committed to git.
+# Search data/ first (production install), then the script directory (dev/legacy).
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_DATA_DIR = os.path.join(_BASE_DIR, "data")
+import sys as _sys
+for _d in (_DATA_DIR, _BASE_DIR):
+    if _d not in _sys.path:
+        _sys.path.insert(0, _d)
 try:
     from smb_config import *  # noqa: F401,F403
 except ImportError:
@@ -66,7 +73,14 @@ HTTP_TIMEOUT = 15
 
 
 # ── Queue + ledger paths ──────────────────────────────────────────────────────
-_DIR         = os.path.dirname(os.path.abspath(__file__))
+# Use data/ subdirectory (pi-writable, root-locked source stays above it).
+# Fall back to the base dir if data/ doesn't exist yet (dev / pre-install).
+try:
+    os.makedirs(_DATA_DIR, exist_ok=True)
+    _DIR = _DATA_DIR
+except PermissionError:
+    _DIR = _BASE_DIR
+
 _QUEUE_FILE  = os.path.join(_DIR, "delivery_queue.json")
 _LEDGER_FILE = os.path.join(_DIR, "delivery_sent.log")
 
