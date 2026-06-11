@@ -158,6 +158,8 @@ install_cli() {
     if [[ -f "${CLI_SRC}" ]]; then
         chmod +x "${CLI_SRC}"
         cp "${CLI_SRC}" "${CLI_DEST}"
+        # Remove stale ~/.local/bin/ copy — it takes PATH priority and can shadow updates
+        rm -f "/home/pi/.local/bin/plc_checkweigher" 2>/dev/null || true
         ok "plc_checkweigher  →  ${CLI_DEST}"
         ok "Run: plc_checkweigher status   (full system diagnostic)"
     else

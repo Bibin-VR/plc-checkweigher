@@ -1216,6 +1216,11 @@ update)
     else
         spin_warn "CLI install failed — still running previous version until next install"
     fi
+    # Also sync ~/.local/bin/ if a copy exists there (it takes PATH priority)
+    _LOCAL_CLI="/home/pi/.local/bin/plc_checkweigher"
+    if [[ -f "$_LOCAL_CLI" ]]; then
+        cp "${INSTALL_DIR}/bin/plc_checkweigher" "$_LOCAL_CLI" 2>/dev/null || true
+    fi
 
     # ── Update systemd unit files if they changed ─────────────────────────────
     _UNITS_UPDATED=0
