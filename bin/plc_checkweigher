@@ -1408,6 +1408,61 @@ PYEOF
         ulog "CONFIG: services OK"
     fi
 
+    # 6. setserial masked (hangs on RT kernel, blocks boot completion)
+    spin_start "setserial mask"
+    if [[ "$(systemctl is-enabled setserial 2>/dev/null)" != "masked" ]] \
+       && systemctl list-unit-files setserial.service 2>/dev/null | grep -q setserial; then
+        sudo systemctl mask --now setserial.service &>/dev/null \
+            && spin_ok "setserial was unmasked — masked now" \
+            || spin_warn "Could not mask setserial"
+        ulog "FIXED: setserial masked"
+    else
+        spin_ok "setserial masked / absent"
+        ulog "CONFIG: setserial OK"
+    fi
+
+    # 7. Shutdown timeout cap (10 s per unit)
+    spin_start "Shutdown timeout cap"
+    _SHUT_CONF="/etc/systemd/system.conf.d/plc-shutdown.conf"
+    if ! grep -q "DefaultTimeoutStopSec=10s" "$_SHUT_CONF" 2>/dev/null; then
+        sudo mkdir -p /etc/systemd/system.conf.d
+        printf '[Manager]\nDefaultTimeoutStopSec=10s\n' | sudo tee "$_SHUT_CONF" >/dev/null
+        sudo systemctl daemon-reload
+        spin_ok "Shutdown cap installed (10 s)"
+        ulog "FIXED: shutdown timeout cap installed"
+    else
+        spin_ok "10 s cap active"
+        ulog "CONFIG: shutdown cap OK"
+    fi
+
+    # 8. Persistent journal (capped 64 MB)
+    spin_start "Persistent journal"
+    _JRN_CONF="/etc/systemd/journald.conf.d/plc-journal.conf"
+    if ! grep -q "Storage=persistent" "$_JRN_CONF" 2>/dev/null; then
+        sudo mkdir -p /etc/systemd/journald.conf.d /var/log/journal
+        printf '[Journal]\nStorage=persistent\nSystemMaxUse=64M\n' | sudo tee "$_JRN_CONF" >/dev/null
+        sudo systemctl restart systemd-journald 2>/dev/null || true
+        spin_ok "Persistent journal enabled (64 MB cap)"
+        ulog "FIXED: persistent journal enabled"
+    else
+        spin_ok "Persistent journal active"
+        ulog "CONFIG: journal OK"
+    fi
+
+    # 9. lightdm must not wait on deprecated udev-settle (~2.4 s saved)
+    spin_start "lightdm boot dependency"
+    _LDM_DROPIN="/etc/systemd/system/lightdm.service.d/display-priority.conf"
+    if [[ -f "$_LDM_DROPIN" ]] && grep -q "udev-settle" "$_LDM_DROPIN"; then
+        sudo sed -i 's/^After=systemd-udev-settle.service /After=/' "$_LDM_DROPIN"
+        sudo sed -i '/^Wants=systemd-udev-settle.service/d' "$_LDM_DROPIN"
+        sudo systemctl daemon-reload
+        spin_ok "udev-settle wait removed from lightdm"
+        ulog "FIXED: lightdm udev-settle dependency removed"
+    else
+        spin_ok "lightdm dependencies clean"
+        ulog "CONFIG: lightdm OK"
+    fi
+
     # ── Restart services ──────────────────────────────────────────────────────
     spin_start "Restarting services"
     sudo systemctl restart plc_watcher plc_web 2>/dev/null

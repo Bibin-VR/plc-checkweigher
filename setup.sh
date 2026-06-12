@@ -545,8 +545,7 @@ setup_display() {
     cat > /etc/systemd/system/lightdm.service.d/display-priority.conf << 'EOF'
 [Unit]
 # Start after hardware udev settles (HDMI/DSI detected) — not after network.
-After=systemd-udev-settle.service local-fs.target acpid.socket dbus.service
-Wants=systemd-udev-settle.service
+After=local-fs.target acpid.socket dbus.service
 # StartLimit* MUST be in [Unit] — ignored in [Service].
 StartLimitBurst=10
 StartLimitIntervalSec=60
@@ -729,6 +728,12 @@ setup_system_optimize() {
     grep -q "^dtoverlay=disable-bt" "${BOOT_FW}/config.txt" \
         || echo "dtoverlay=disable-bt" >> "${BOOT_FW}/config.txt"
     ok "Bluetooth radio disabled at boot  (dtoverlay=disable-bt)"
+
+    # setserial hangs at boot on the RT kernel ("Loading the saved-state of
+    # the serial devices...") and blocks multi-user.target forever. Mask it —
+    # PLC comms are TCP; nothing here needs serial port tuning.
+    systemctl mask --now setserial.service &>/dev/null || true
+    ok "setserial masked  (hangs on RT kernel, blocks boot completion)"
 
     # Fast, bounded shutdown — no unit may hold a reboot longer than 10 s
     # (systemd default is 90 s per unit; one hung service = very slow poweroff).
