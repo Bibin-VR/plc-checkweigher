@@ -345,6 +345,51 @@
     }
     .empty-msg::before { content: ">>> "; color: var(--red); }
 
+    /* ── MAINTENANCE — command buttons + terminal output ── */
+    .maint-bar {
+      display: flex;
+      gap: 1px;
+      background: var(--line);
+      border: 1px solid var(--line);
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .mbtn {
+      flex: 1;
+      min-width: 110px;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      padding: 11px 0;
+      background: var(--panel);
+      color: var(--fg);
+      border: none;
+      cursor: pointer;
+    }
+    .mbtn:hover:not(:disabled)  { background: var(--fg); color: var(--sub); }
+    .mbtn:disabled              { color: var(--faint); cursor: not-allowed; }
+    .mbtn.active                { background: var(--fg); color: var(--sub); }
+    .mbtn.stop                  { color: var(--red); }
+    .mbtn.stop:hover:not(:disabled) { background: var(--red); color: var(--fg); }
+
+    .term-out {
+      background: var(--sub);
+      border: 1px solid var(--line-2);
+      color: var(--fg);
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.55;
+      letter-spacing: .02em;
+      padding: 12px 14px;
+      max-height: 340px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .term-out:empty::before { content: ">>> READY"; color: var(--faint); }
+
     /* footer strip — unit metadata */
     .sys-strip {
       max-width: 1180px;
@@ -467,6 +512,18 @@
         <tbody id="items-body"></tbody>
       </table>
     </div>
+  </div>
+
+  <!-- maintenance console -->
+  <div class="card" style="margin-top:14px">
+    <div class="card-title">Maintenance Console</div>
+    <div class="maint-bar">
+      <button class="mbtn" id="btn-status" onclick="runCmd('status')">Status</button>
+      <button class="mbtn" id="btn-fix"    onclick="runCmd('fix')">Fix</button>
+      <button class="mbtn" id="btn-logs"   onclick="runCmd('logs')">Logs</button>
+      <button class="mbtn stop" id="btn-stop" onclick="stopCmd()" disabled>Stop</button>
+    </div>
+    <pre class="term-out" id="term-out"></pre>
   </div>
 
 </main>
@@ -682,6 +739,56 @@
     };
   }
   connectEvents();
+
+  /* ── Maintenance console — stream CLI output via SSE ── */
+  const termOut  = document.getElementById('term-out');
+  const cmdBtns  = {
+    status: document.getElementById('btn-status'),
+    fix:    document.getElementById('btn-fix'),
+    logs:   document.getElementById('btn-logs'),
+  };
+  const btnStop  = document.getElementById('btn-stop');
+  let   cmdSrc   = null;
+  const TERM_MAX_LINES = 600;
+
+  function setBusy(name) {
+    Object.entries(cmdBtns).forEach(([k, b]) => {
+      b.disabled = !!name;
+      b.classList.toggle('active', k === name);
+    });
+    btnStop.disabled = !name;
+  }
+
+  function termAppend(line) {
+    termOut.textContent += line + '\n';
+    // bound memory on long-running logs follow
+    const lines = termOut.textContent.split('\n');
+    if (lines.length > TERM_MAX_LINES) {
+      termOut.textContent = lines.slice(lines.length - TERM_MAX_LINES).join('\n');
+    }
+    termOut.scrollTop = termOut.scrollHeight;
+  }
+
+  function runCmd(name) {
+    stopCmd();
+    termOut.textContent = '';
+    setBusy(name);
+    cmdSrc = new EventSource('/api/cmd/' + name);
+    cmdSrc.onmessage = ev => {
+      termAppend(ev.data);
+      if (ev.data.startsWith('[DONE]')) stopCmd(true);
+    };
+    cmdSrc.onerror = () => stopCmd(true);
+  }
+
+  function stopCmd(finished) {
+    if (cmdSrc) {
+      cmdSrc.close();
+      cmdSrc = null;
+      if (!finished) termAppend('[STOPPED]');
+    }
+    setBusy(null);
+  }
 </script>
 
 </body>

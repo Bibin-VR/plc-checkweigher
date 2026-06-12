@@ -168,6 +168,22 @@ install_cli() {
     else
         warn "bin/plc_checkweigher not found — skipping CLI install"
     fi
+
+    # Scoped sudoers rule: web dashboard maintenance console can run the
+    # locked root-owned CLI's fix command (and nothing else) without password.
+    cat > /tmp/010_plc-web-fix << 'EOF'
+# Web dashboard maintenance console — allows the locked, root-owned CLI
+# to run its fix command from plc_web (User=pi). Scope: fix only.
+pi ALL=(root) NOPASSWD: /usr/local/bin/plc_checkweigher fix, /usr/local/bin/plc_checkweigher fix *
+EOF
+    if visudo -c -f /tmp/010_plc-web-fix &>/dev/null; then
+        cp /tmp/010_plc-web-fix /etc/sudoers.d/010_plc-web-fix
+        chmod 440 /etc/sudoers.d/010_plc-web-fix
+        ok "Web maintenance sudoers rule installed  (fix only, validated)"
+    else
+        warn "sudoers rule failed validation — web FIX button will not work"
+    fi
+    rm -f /tmp/010_plc-web-fix
 }
 
 # ── 5. WiFi — scan → pick → password ─────────────────────────────────────────

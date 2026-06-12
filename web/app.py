@@ -8,6 +8,9 @@ Run: python3 app.py   (then open http://<pi-ip>:8080)
 import json
 import os
 import re
+import signal
+import subprocess
+import threading
 import time
 from datetime import datetime
 from flask import Flask, Response, jsonify, send_from_directory, abort, render_template, stream_with_context
@@ -171,6 +174,76 @@ def events():
                 return
             except Exception:
                 pass
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Maintenance commands — streamed live to the dashboard terminal panel.
+# Whitelist only; one command at a time; ANSI stripped server-side.
+#   status → debugger.py directly (read-only diagnostic, runs as pi)
+#   fix    → locked CLI via scoped NOPASSWD sudoers rule (010_plc-web-fix)
+#   logs   → journalctl follow (pi is in adm group); killed on disconnect
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ANSI_RE  = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\r")
+_CMD_LOCK = threading.Lock()
+
+_MAINT_COMMANDS = {
+    "status": ["/home/pi/plc_env/bin/python3", "-u",
+               "/home/pi/plc_checkweigher/debugger.py"],
+    "fix":    ["sudo", "-n", "/usr/local/bin/plc_checkweigher", "fix"],
+    "logs":   ["journalctl", "-u", "plc_watcher", "-u", "plc_web",
+               "-f", "--no-pager", "-n", "60"],
+}
+
+
+@app.route("/api/cmd/<name>")
+def api_cmd(name):
+    if name not in _MAINT_COMMANDS:
+        abort(404)
+
+    if not _CMD_LOCK.acquire(blocking=False):
+        def busy():
+            yield "data: [BUSY] another command is already running — wait for it to finish\n\n"
+            yield "data: [DONE] exit=1\n\n"
+        return Response(stream_with_context(busy()),
+                        mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache",
+                                 "X-Accel-Buffering": "no"})
+
+    cmd = _MAINT_COMMANDS[name]
+
+    def generate():
+        proc = None
+        try:
+            yield f"data: $ plc {name}\n\n"
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                start_new_session=True,   # own pgroup → children killable too
+            )
+            for line in proc.stdout:
+                clean = _ANSI_RE.sub("", line).rstrip()
+                yield f"data: {clean}\n\n"
+            proc.wait()
+            yield f"data: [DONE] exit={proc.returncode}\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            if proc is not None and proc.poll() is None:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                except Exception:
+                    pass   # root-owned (fix) — finite, lets it finish on its own
+            _CMD_LOCK.release()
 
     return Response(
         stream_with_context(generate()),

@@ -1450,6 +1450,30 @@ PYEOF
         ulog "CONFIG: journal OK"
     fi
 
+    # 9b. Web maintenance sudoers rule (dashboard FIX button)
+    spin_start "Web maintenance sudoers rule"
+    _SUDOERS_F="/etc/sudoers.d/010_plc-web-fix"
+    if [[ ! -f "$_SUDOERS_F" ]]; then
+        cat > /tmp/010_plc-web-fix << 'SUDOEOF'
+# Web dashboard maintenance console — allows the locked, root-owned CLI
+# to run its fix command from plc_web (User=pi). Scope: fix only.
+pi ALL=(root) NOPASSWD: /usr/local/bin/plc_checkweigher fix, /usr/local/bin/plc_checkweigher fix *
+SUDOEOF
+        if sudo visudo -c -f /tmp/010_plc-web-fix &>/dev/null; then
+            sudo cp /tmp/010_plc-web-fix "$_SUDOERS_F"
+            sudo chmod 440 "$_SUDOERS_F"
+            spin_ok "Sudoers rule installed (web FIX button enabled)"
+            ulog "FIXED: web maintenance sudoers rule installed"
+        else
+            spin_warn "Sudoers rule failed validation — skipped"
+            ulog "WARN: sudoers rule validation failed"
+        fi
+        rm -f /tmp/010_plc-web-fix
+    else
+        spin_ok "Sudoers rule present"
+        ulog "CONFIG: web sudoers OK"
+    fi
+
     # 9. lightdm must not wait on deprecated udev-settle (~2.4 s saved)
     spin_start "lightdm boot dependency"
     _LDM_DROPIN="/etc/systemd/system/lightdm.service.d/display-priority.conf"
@@ -1662,6 +1686,7 @@ uninstall)
     BASHRC="${HOME_DIR}/.bashrc"
     [[ -f "$BASHRC" ]] && sed -i '/export PATH.*\.local\/bin/d' "$BASHRC" 2>/dev/null || true
     sudo rm -f /usr/local/bin/plc_checkweigher
+    sudo rm -f /etc/sudoers.d/010_plc-web-fix
     rm -f "${HOME_DIR}/.local/bin/plc_checkweigher" 2>/dev/null || true
     if [[ "${KEEP_REPORTS^^}" != "Y" && -d "$REPORTS_DIR" ]]; then
         rm -rf "$REPORTS_DIR"
