@@ -86,35 +86,15 @@ function buildBanner() {
   return lines.join('\n');
 }
 
-const STAMP_FILE = '/tmp/.plc-checkweigher-postinstall';
-
 function showAccessDenied() {
-  const banner = buildBanner();
-  const isPostinstall = process.env.npm_lifecycle_event === 'postinstall';
-
-  if (isPostinstall) {
-    // npm 7+ pipes away stdout/stderr — write directly to /dev/tty.
-    try {
-      const fd = fs.openSync('/dev/tty', 'w');
-      fs.writeSync(fd, banner + '\n');
-      fs.closeSync(fd);
-    } catch (_) {}
-    // Always stamp regardless of whether /dev/tty was available,
-    // so the CLI invocation npx runs right after skips the banner.
-    try { fs.writeFileSync(STAMP_FILE, String(Date.now())); } catch (_) {}
+  // During npm install the binary hasn't been invoked yet — exit silently.
+  // The banner only makes sense when someone runs the binary directly
+  // without a valid subcommand (e.g. bare `npx plc-checkweigher`).
+  if (process.env.npm_lifecycle_event === 'postinstall') {
     process.exit(0);
   }
 
-  // Suppress duplicate: if postinstall printed the banner within the last 3s, skip.
-  try {
-    const ts = parseInt(fs.readFileSync(STAMP_FILE, 'utf8'), 10);
-    if (Date.now() - ts < 3000) {
-      fs.unlinkSync(STAMP_FILE);
-      process.exit(1);
-    }
-  } catch (_) {}
-
-  console.log(banner);
+  console.log(buildBanner());
   process.exit(1);
 }
 
