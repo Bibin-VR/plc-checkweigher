@@ -97,8 +97,11 @@ preflight() {
 
 # ── 1. System packages ────────────────────────────────────────────────────────
 install_system_packages() {
-    step "System packages ..."
+    step "System update + packages ..."
     DEBIAN_FRONTEND=noninteractive apt-get update -qq
+    echo "  Upgrading all packages to latest (this can take several minutes) ..."
+    DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y -qq
+    ok "System fully upgraded"
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
         git python3-venv python3-pip python3-dev \
         samba-client cifs-utils network-manager curl build-essential
@@ -507,7 +510,12 @@ EOF
         sed -i 's/$/ logo.nologo/' /boot/firmware/cmdline.txt
     fi
     sed -i 's/loglevel=3/loglevel=1/' /boot/firmware/cmdline.txt 2>/dev/null || true
-    ok "Boot cmdline patched  (logo.nologo, loglevel=1, disable_splash=1)"
+    # Silence systemd service status lines + udev on the console
+    for _param in "systemd.show_status=0" "rd.systemd.show_status=0" "udev.log_level=3"; do
+        grep -q "$_param" /boot/firmware/cmdline.txt \
+            || sed -i "s/\$/ ${_param}/" /boot/firmware/cmdline.txt
+    done
+    ok "Boot cmdline patched  (logo.nologo, loglevel=1, silent systemd, disable_splash=1)"
 
     # Rebuild current initramfs so Plymouth is included.
     # The RT kernel's post-install will create its own initramfs with Plymouth
@@ -685,6 +693,43 @@ lock_source_files() {
 }
 
 # ── 12. RT kernel — installed LAST so only one reboot is needed ───────────────
+# ── 11d. System optimization — disable everything not needed by the tool ─────
+setup_system_optimize() {
+    step "System optimization  (disable non-essential services) ..."
+
+    # Services NOT used by: PLC stack, web UI, WiFi, SSH, SMB push (client-only),
+    # LightDM kiosk, VS Code, or Raspberry Pi Connect.
+    # KEEP: NetworkManager, ssh, lightdm, rpi-connect, systemd-timesyncd,
+    #       fstrim.timer (SD card health), e2scrub (fs health).
+    local _DISABLE=(
+        bluetooth              # no BT devices used
+        hciuart                # BT UART helper
+        ModemManager           # no cellular modem
+        triggerhappy           # hotkey daemon
+        avahi-daemon           # mDNS discovery — tool uses direct IPs
+        cups                   # no printing
+        cups-browsed
+        apt-daily.timer        # no background auto-update (manual: tool update)
+        apt-daily-upgrade.timer
+        man-db.timer           # man page reindexing
+        packagekit             # GUI package manager backend
+    )
+    for _svc in "${_DISABLE[@]}"; do
+        if systemctl list-unit-files "${_svc}"* 2>/dev/null | grep -q "${_svc}"; then
+            systemctl disable --now "${_svc}" &>/dev/null \
+                && ok "disabled  ${_svc}" \
+                || true
+        fi
+    done
+
+    # Power off the Bluetooth radio entirely at boot
+    grep -q "^dtoverlay=disable-bt" "${BOOT_FW}/config.txt" \
+        || echo "dtoverlay=disable-bt" >> "${BOOT_FW}/config.txt"
+    ok "Bluetooth radio disabled at boot  (dtoverlay=disable-bt)"
+
+    ok "System optimized — PLC stack, WiFi, SSH, Pi Connect untouched"
+}
+
 install_rt_kernel() {
     step "PREEMPT_RT kernel  (final step before reboot) ..."
 
@@ -793,6 +838,7 @@ main() {
     setup_display             # 11 — LightDM priority, CPU isolation, utmpx
     setup_vscode_priority     # 11b — VS Code: cores 0-2, Nice=-5
     lock_source_files         # 11c — root:root on .py, pi:pi on data/
+    setup_system_optimize     # 11d — disable bluetooth/avahi/cups/apt-timers
     install_rt_kernel         # 12 — LAST, so only one reboot needed
     do_reboot                 # 12 — single reboot applies everything
 }

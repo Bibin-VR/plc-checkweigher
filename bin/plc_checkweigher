@@ -1134,6 +1134,13 @@ update)
     echo ""
     need_sudo
 
+    # ── Update report log (pushed to SMB at the end) ──────────────────────────
+    ULOG_DIR="/home/pi/reports/logs"
+    mkdir -p "$ULOG_DIR" 2>/dev/null || true
+    ULOG="${ULOG_DIR}/update_$(date '+%Y%m%d_%H%M%S').log"
+    ulog() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$ULOG"; }
+    ulog "=== Update started ==="
+
     # ── Warn if a batch is actively running ───────────────────────────────────
     _IS_RUNNING=0
     if [[ -f "/tmp/plc_live.json" ]]; then
@@ -1187,6 +1194,7 @@ update)
         exit 0
     fi
     spin_ok "Pulled  ${_PREV_SHORT} → ${_NEW_SHORT}"
+    ulog "GIT: pulled ${_PREV_SHORT} -> ${_NEW_SHORT}"
 
     # ── Show what changed ─────────────────────────────────────────────────────
     echo ""
@@ -1301,12 +1309,102 @@ PYEOF
 
         if [[ $_PLY_CHANGED -eq 1 ]]; then
             spin_ok "Boot splash updated — rebuilding initramfs (~30 s)"
-            sudo update-initramfs -u > /tmp/update_initramfs.log 2>&1 \
-                && ok "initramfs rebuilt — reboot to apply splash changes" \
+            # Rebuild for the RUNNING kernel (plain -u may pick a different one)
+            _KVER="$(uname -r)"
+            sudo update-initramfs -u -k "${_KVER}" > /tmp/update_initramfs.log 2>&1 \
+                && ok "initramfs rebuilt for ${_KVER}" \
                 || warn "initramfs warnings — see /tmp/update_initramfs.log"
+            # Sync to the firmware partition — this is what actually boots
+            if [[ -f "/boot/initrd.img-${_KVER}" ]] \
+               && grep -q "initramfs initramfs8-rt" /boot/firmware/config.txt 2>/dev/null; then
+                sudo cp "/boot/initrd.img-${_KVER}" /boot/firmware/initramfs8-rt \
+                    && ok "initramfs8-rt synced — reboot to apply splash" \
+                    || warn "Could not sync initramfs8-rt"
+            fi
+            ulog "SPLASH: regenerated, initramfs rebuilt + synced (${_KVER})"
         else
             spin_ok "Boot splash already up to date"
+            ulog "SPLASH: up to date"
         fi
+    fi
+
+    # ── Verify crucial system configuration ───────────────────────────────────
+    echo ""
+    echo -e "  ${B}▸ System Configuration Check${NC}"; hr; echo ""
+
+    # 1. RT kernel active in config.txt
+    spin_start "RT kernel boot config"
+    if grep -q "^kernel=kernel8-rt.img" /boot/firmware/config.txt 2>/dev/null \
+       && grep -q "^initramfs initramfs8-rt" /boot/firmware/config.txt 2>/dev/null; then
+        spin_ok "RT kernel + initramfs configured"
+        ulog "CONFIG: RT kernel boot entries OK"
+    else
+        spin_warn "RT kernel boot entries missing in config.txt!"
+        ulog "WARN: RT kernel boot entries missing"
+    fi
+
+    # 2. RT initramfs freshness — resync if the source initrd is newer
+    spin_start "RT initramfs freshness"
+    _RT_KVER="$(uname -r)"
+    _SRC_INITRD="/boot/initrd.img-${_RT_KVER}"
+    _FW_INITRD="/boot/firmware/initramfs8-rt"
+    if [[ -f "$_SRC_INITRD" && -f "$_FW_INITRD" ]] \
+       && [[ "$_SRC_INITRD" -nt "$_FW_INITRD" ]]; then
+        sudo cp "$_SRC_INITRD" "$_FW_INITRD" \
+            && spin_ok "initramfs8-rt was stale — resynced" \
+            || spin_warn "initramfs8-rt resync failed"
+        ulog "FIXED: stale initramfs8-rt resynced"
+    else
+        spin_ok "initramfs8-rt up to date"
+        ulog "CONFIG: initramfs8-rt fresh"
+    fi
+
+    # 3. Boot cmdline parameters
+    spin_start "Boot cmdline (quiet splash)"
+    _CMD_MISSING=""
+    for _param in "quiet" "splash" "logo.nologo" "systemd.show_status=0"; do
+        grep -q "$_param" /boot/firmware/cmdline.txt 2>/dev/null \
+            || _CMD_MISSING="${_CMD_MISSING} ${_param}"
+    done
+    if [[ -n "$_CMD_MISSING" ]]; then
+        for _param in $_CMD_MISSING; do
+            sudo sed -i "s/\$/ ${_param}/" /boot/firmware/cmdline.txt
+        done
+        spin_ok "Restored missing cmdline params:${_CMD_MISSING}"
+        ulog "FIXED: cmdline params restored:${_CMD_MISSING}"
+    else
+        spin_ok "All boot cmdline params present"
+        ulog "CONFIG: cmdline OK"
+    fi
+
+    # 4. Plymouth theme still set
+    spin_start "Plymouth theme"
+    _CUR_THEME=$(sudo plymouth-set-default-theme 2>/dev/null || echo "")
+    if [[ "$_CUR_THEME" != "saismruth" ]]; then
+        sudo plymouth-set-default-theme saismruth 2>/dev/null \
+            && spin_ok "Theme was '${_CUR_THEME:-none}' — reset to saismruth" \
+            || spin_warn "Could not set theme"
+        ulog "FIXED: plymouth theme reset (was: ${_CUR_THEME:-none})"
+    else
+        spin_ok "saismruth active"
+        ulog "CONFIG: plymouth theme OK"
+    fi
+
+    # 5. Non-essential services stay disabled (upgrades can re-enable them)
+    spin_start "Non-essential services"
+    _RE_DISABLED=""
+    for _svc in bluetooth avahi-daemon cups apt-daily.timer apt-daily-upgrade.timer man-db.timer; do
+        if systemctl is-enabled "$_svc" &>/dev/null; then
+            sudo systemctl disable --now "$_svc" &>/dev/null \
+                && _RE_DISABLED="${_RE_DISABLED} ${_svc}"
+        fi
+    done
+    if [[ -n "$_RE_DISABLED" ]]; then
+        spin_ok "Re-disabled:${_RE_DISABLED}"
+        ulog "FIXED: re-disabled services:${_RE_DISABLED}"
+    else
+        spin_ok "All non-essential services off"
+        ulog "CONFIG: services OK"
     fi
 
     # ── Restart services ──────────────────────────────────────────────────────
@@ -1326,6 +1424,29 @@ PYEOF
     echo ""
     ok "Update complete  (${_PREV_SHORT} → ${_NEW_SHORT})"
     [[ $_PLY_CHANGED -eq 1 ]] && warn "Reboot required for boot splash changes to take effect."
+    ulog "SERVICES: plc_watcher=${_UW} plc_web=${_UWb}"
+    ulog "=== Update complete: ${_PREV_SHORT} -> ${_NEW_SHORT} ==="
+    info "Report: ${ULOG}"
+
+    # ── Push update report to SMB share ───────────────────────────────────────
+    _SMB_HOST=$(smb_get "SMB_HOST")
+    _SMB_SHARE=$(smb_get "SMB_SHARE")
+    _SMB_USER=$(smb_get "SMB_USERNAME")
+    _SMB_PASS=$(smb_get "SMB_PASSWORD")
+    _SMB_EN=$(grep "^SMB_ENABLED" "${SMB_CFG}" 2>/dev/null | grep -qi "true" && echo "1" || echo "0")
+
+    if [[ "$_SMB_EN" == "1" && -n "$_SMB_HOST" && -n "$_SMB_USER" ]] \
+       && command -v smbclient &>/dev/null; then
+        spin_start "Pushing update report to SMB share"
+        _ULOG_BASE="$(basename "$ULOG")"
+        if smbclient "//${_SMB_HOST}/${_SMB_SHARE}" \
+               -U "${_SMB_USER}%${_SMB_PASS}" \
+               -c "mkdir logs; put ${ULOG} logs/${_ULOG_BASE}" &>/dev/null 2>&1; then
+            spin_ok "Report pushed → //${_SMB_HOST}/${_SMB_SHARE}/logs/${_ULOG_BASE}"
+        else
+            spin_warn "SMB push failed — report saved locally at ${ULOG}"
+        fi
+    fi
     echo ""
     ;;
 
@@ -1545,7 +1666,7 @@ uninstall)
     echo "  ╔══════════════════════════════════════════════════════════╗"
     echo "  ║  Uninstall complete.                                     ║"
     echo "  ║                                                          ║"
-    echo "  ║  A reboot is needed to apply kernel revert.             ║"
+    echo "  ║  A reboot is needed to apply kernel revert.              ║"
     echo "  ╚══════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     [[ "${KEEP_REPORTS^^}" == "Y" ]] && info "PDFs still at: ${REPORTS_DIR}  (remove manually if needed)"
