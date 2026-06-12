@@ -269,6 +269,45 @@
     }
     .term-input:disabled { opacity: .4; }
 
+    /* auth gate — restricted access screen */
+    .term-auth {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .term-auth-box { text-align: center; }
+    .term-auth-label {
+      font-size: 13px; font-weight: 700;
+      letter-spacing: .22em; color: var(--red);
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .term-auth-hint {
+      font-size: 11px; color: var(--dim);
+      letter-spacing: .12em; text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+    .term-auth-input {
+      background: var(--sub);
+      border: 1px solid var(--line-2);
+      color: var(--fg);
+      font-family: var(--mono);
+      font-size: 15px;
+      letter-spacing: .3em;
+      text-align: center;
+      padding: 10px 14px;
+      width: 260px;
+      outline: none;
+      caret-color: var(--grn);
+    }
+    .term-auth-input:focus { border-color: var(--fg); }
+    .term-auth-err {
+      font-size: 11px; color: var(--red);
+      letter-spacing: .1em; text-transform: uppercase;
+      margin-top: 12px; min-height: 14px;
+    }
+
     /* ════════════════ MAIN ════════════════ */
     main {
       max-width: 1180px;
@@ -682,20 +721,33 @@
       <span style="font-size:9px;color:var(--faint);letter-spacing:.18em;">RESTRICTED // PLC_CHECKWEIGHER ONLY</span>
       <button class="term-close" onclick="closeConsole()">✕</button>
     </div>
-    <div class="term-quick">
-      <button class="qbtn" onclick="runConsole('status')">Status</button>
-      <button class="qbtn" onclick="runConsole('fix')">Fix</button>
-      <button class="qbtn" onclick="runConsole('logs')">Logs</button>
-      <button class="qbtn" onclick="runConsole('queue')">Queue</button>
-      <button class="qbtn" onclick="runConsole('update')">Update</button>
-      <button class="qbtn stop" id="btn-stop" onclick="stopConsole()" disabled>Stop</button>
+    <!-- auth gate — shown until a valid access code is entered -->
+    <div class="term-auth" id="term-auth">
+      <div class="term-auth-box">
+        <div class="term-auth-label">&gt;&gt;&gt; RESTRICTED ACCESS</div>
+        <div class="term-auth-hint">Enter maintenance access code</div>
+        <input class="term-auth-input" id="auth-input" type="password"
+               autocomplete="off" placeholder="ACCESS CODE" />
+        <div class="term-auth-err" id="auth-err"></div>
+      </div>
     </div>
-    <pre class="term-body" id="term-out"></pre>
-    <div class="term-input-row">
-      <span class="term-prompt" id="term-prompt">maint@cw-2400:~$</span>
-      <input class="term-input" id="term-input" type="text"
-             autocomplete="off" spellcheck="false"
-             placeholder="plc_checkweigher …" />
+
+    <div class="term-session" id="term-session" style="display:none; flex:1; min-height:0; flex-direction:column;">
+      <div class="term-quick">
+        <button class="qbtn" onclick="runConsole('status')">Status</button>
+        <button class="qbtn" onclick="runConsole('fix')">Fix</button>
+        <button class="qbtn" onclick="runConsole('logs')">Logs</button>
+        <button class="qbtn" onclick="runConsole('queue')">Queue</button>
+        <button class="qbtn" onclick="runConsole('update')">Update</button>
+        <button class="qbtn stop" id="btn-stop" onclick="stopConsole()" disabled>Stop</button>
+      </div>
+      <pre class="term-body" id="term-out"></pre>
+      <div class="term-input-row">
+        <span class="term-prompt" id="term-prompt">maint@cw-2400:~$</span>
+        <input class="term-input" id="term-input" type="text"
+               autocomplete="off" spellcheck="false"
+               placeholder="plc_checkweigher …" />
+      </div>
     </div>
   </div>
 </div>
@@ -939,9 +991,60 @@
     'uninstall) are blocked here — use an SSH session.',
   ];
 
+  /* ── auth gate ── */
+  const termAuth    = document.getElementById('term-auth');
+  const termSession = document.getElementById('term-session');
+  const authInput   = document.getElementById('auth-input');
+  const authErr     = document.getElementById('auth-err');
+
+  function consoleToken()      { return sessionStorage.getItem('maint_token') || ''; }
+  function setConsoleToken(t)  { sessionStorage.setItem('maint_token', t); }
+  function clearConsoleToken() { sessionStorage.removeItem('maint_token'); }
+
+  function showGate() {
+    termAuth.style.display    = 'flex';
+    termSession.style.display = 'none';
+    authInput.value = '';
+    authErr.textContent = '';
+    setTimeout(() => authInput.focus(), 50);
+  }
+  function showSession() {
+    termAuth.style.display    = 'none';
+    termSession.style.display = 'flex';
+    setTimeout(() => termInput.focus(), 50);
+  }
+
+  async function tryAuth() {
+    const pw = authInput.value;
+    if (!pw) return;
+    authErr.textContent = 'CHECKING…';
+    try {
+      const r = await fetch('/api/console/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw }),
+      });
+      const j = await r.json();
+      if (r.ok && j.token) {
+        setConsoleToken(j.token);
+        showSession();
+      } else {
+        authErr.textContent = (j.error || 'ACCESS DENIED').toUpperCase();
+        authInput.value = '';
+        authInput.focus();
+      }
+    } catch (_) {
+      authErr.textContent = 'CONNECTION ERROR';
+    }
+  }
+
+  authInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') tryAuth();
+  });
+
   function openConsole() {
     termOverlay.classList.add('active');
-    termInput.focus();
+    if (consoleToken()) showSession(); else showGate();
   }
   function closeConsole() {
     stopConsole();
@@ -981,8 +1084,16 @@
     }
 
     setBusy(true);
-    cmdSrc = new EventSource('/api/console?cmd=' + encodeURIComponent(raw));
+    cmdSrc = new EventSource('/api/console?cmd=' + encodeURIComponent(raw)
+                             + '&token=' + encodeURIComponent(consoleToken()));
     cmdSrc.onmessage = ev => {
+      if (ev.data.startsWith('[AUTH-REQUIRED]')) {
+        // token expired or invalid — back to the gate
+        stopConsole(true);
+        clearConsoleToken();
+        showGate();
+        return;
+      }
       termAppend(ev.data);
       if (ev.data.startsWith('[DONE]')) stopConsole();
     };

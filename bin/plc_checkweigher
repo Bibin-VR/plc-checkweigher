@@ -587,6 +587,30 @@ smb-config)
     ;;
 
 # ─────────────────────────────────────────────────────────────────────────────
+# CONSOLE-PASSWD — set / change the web maintenance terminal access code
+# ─────────────────────────────────────────────────────────────────────────────
+console-passwd)
+    banner "Maintenance Console Access Code"
+    echo ""
+    info "Required by the dashboard terminal (>_ button). Stored as SHA-256."
+    echo ""
+    mkdir -p "${DATA_DIR}" 2>/dev/null || true
+    while true; do
+        read -r -s -p "  New access code: " _PW </dev/tty; echo ""
+        if [[ -z "$_PW" ]]; then err "Cannot be empty"; continue; fi
+        read -r -s -p "  Confirm:         " _PW2 </dev/tty; echo ""
+        [[ "$_PW" == "$_PW2" ]] && break
+        warn "Codes do not match — try again"
+    done
+    printf '%s' "$_PW" | sha256sum | cut -d' ' -f1 > "${DATA_DIR}/console_passwd"
+    chmod 600 "${DATA_DIR}/console_passwd" 2>/dev/null || true
+    echo ""
+    ok "Console access code updated — active immediately, no restart needed"
+    info "Existing browser sessions stay signed in until they expire (8 h)."
+    echo ""
+    ;;
+
+# ─────────────────────────────────────────────────────────────────────────────
 # FIX — auto-detect and repair common issues
 # Usage: fix [-wifi] [-health] [-programs] [-errors]   (no flags = run all)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1450,6 +1474,16 @@ PYEOF
         ulog "CONFIG: journal OK"
     fi
 
+    # 9a. Console password present (web terminal is fail-closed without it)
+    spin_start "Console access code"
+    if [[ -f "${DATA_DIR}/console_passwd" ]]; then
+        spin_ok "Console access code set"
+        ulog "CONFIG: console password OK"
+    else
+        spin_warn "Not set — web terminal locked. Run: plc_checkweigher console-passwd"
+        ulog "WARN: console password not set"
+    fi
+
     # 9b. Web maintenance sudoers rule (dashboard terminal)
     spin_start "Web maintenance sudoers rule"
     _SUDOERS_F="/etc/sudoers.d/010_plc-web-fix"
@@ -1801,6 +1835,7 @@ help|--help|-h)
     echo ""
     echo -e "  ${W}Configuration${NC}"
     echo "    smb-config                 Interactively update SMB delivery target"
+    echo "    console-passwd             Set/change web maintenance terminal access code"
     echo "    push-test                  Push latest PDF to SMB target now"
     echo "    update                     Pull latest code from GitHub and restart services"
     echo ""

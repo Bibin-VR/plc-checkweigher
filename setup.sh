@@ -277,6 +277,27 @@ setup_wifi() {
     fi
 }
 
+# ── 6b. Web maintenance terminal access code ─────────────────────────────────
+setup_console_passwd() {
+    step "Maintenance console access code ..."
+    echo "  The dashboard's maintenance terminal (>_ button) requires an"
+    echo "  access code. It is stored as a SHA-256 hash, never in plain text."
+    echo ""
+    local PW PW2
+    while true; do
+        read -r -s -p "  Set console access code: " PW </dev/tty; echo ""
+        if [[ -z "$PW" ]]; then echo "  Cannot be empty — try again."; continue; fi
+        read -r -s -p "  Confirm access code:     " PW2 </dev/tty; echo ""
+        [[ "$PW" == "$PW2" ]] && break
+        echo "  Codes do not match — try again."
+    done
+    mkdir -p "${DATA_DIR}"
+    printf '%s' "$PW" | sha256sum | cut -d' ' -f1 > "${DATA_DIR}/console_passwd"
+    chown "${PI_USER}:${PI_USER}" "${DATA_DIR}/console_passwd"
+    chmod 600 "${DATA_DIR}/console_passwd"
+    ok "Console access code set  (change later: plc_checkweigher console-passwd)"
+}
+
 # ── 6. SMB file sharing — interactive ────────────────────────────────────────
 setup_smb() {
     step "SMB File Sharing Setup"
@@ -892,6 +913,7 @@ main() {
     install_cli               # 5  — plc_checkweigher status command
     setup_wifi                # 6  — interactive WiFi picker
     setup_smb                 # 7  — interactive SMB config → smb_config.py
+    setup_console_passwd      # 7b — web maintenance terminal access code
     setup_network_online      # 8
     install_services          # 9
     setup_boot_logo           # 10 — Plymouth: logo + "Sai Samarth Engineering"

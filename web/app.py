@@ -5,9 +5,11 @@ Serves PDF reports from /home/pi/reports/ over a local web interface.
 Run: python3 app.py   (then open http://<pi-ip>:8080)
 """
 
+import hashlib
 import json
 import os
 import re
+import secrets
 import signal
 import subprocess
 import threading
@@ -206,6 +208,8 @@ _MAINT_COMMANDS = {
 def api_cmd(name):
     if name not in _MAINT_COMMANDS:
         abort(404)
+    if not _token_valid(request.args.get("token", "")):
+        abort(401)
 
     if not _CMD_LOCK.acquire(blocking=False):
         def busy():
@@ -263,6 +267,64 @@ _CLI = "/usr/local/bin/plc_checkweigher"
 _FIX_FLAGS = {"-wifi", "-health", "-programs", "-errors"}
 _TOKEN_RE  = re.compile(r"[A-Za-z0-9_-]+")
 
+# ── Console authentication ────────────────────────────────────────────────────
+# Password is set at install time (setup.sh) or via:
+#   plc_checkweigher console-passwd
+# Stored as a sha256 hex digest in data/console_passwd (pi:pi 600).
+# No password file = console locked (fail closed).
+_AUTH_FILE  = "/home/pi/plc_checkweigher/data/console_passwd"
+_TOKEN_TTL  = 8 * 3600          # browser session valid 8 h
+_AUTH_TOKENS = {}               # token -> expiry epoch
+_AUTH_LOCK   = threading.Lock()
+
+
+def _check_password(pw: str) -> bool:
+    try:
+        with open(_AUTH_FILE) as f:
+            stored = f.read().strip()
+    except OSError:
+        return False
+    if len(stored) != 64:
+        return False
+    digest = hashlib.sha256(pw.encode()).hexdigest()
+    return secrets.compare_digest(digest, stored)
+
+
+def _issue_token() -> str:
+    tok = secrets.token_urlsafe(32)
+    with _AUTH_LOCK:
+        now = time.time()
+        # drop expired tokens so the dict can't grow unbounded
+        for t in [t for t, exp in _AUTH_TOKENS.items() if exp < now]:
+            _AUTH_TOKENS.pop(t, None)
+        _AUTH_TOKENS[tok] = now + _TOKEN_TTL
+    return tok
+
+
+def _token_valid(tok: str) -> bool:
+    if not tok:
+        return False
+    with _AUTH_LOCK:
+        exp = _AUTH_TOKENS.get(tok)
+        if exp is None:
+            return False
+        if time.time() > exp:
+            _AUTH_TOKENS.pop(tok, None)
+            return False
+        return True
+
+
+@app.route("/api/console/auth", methods=["POST"])
+def console_auth():
+    pw = (request.get_json(silent=True) or {}).get("password", "")
+    time.sleep(1.0)               # brute-force damping
+    if not os.path.exists(_AUTH_FILE):
+        return jsonify({"error": "console password not set — run: "
+                                 "plc_checkweigher console-passwd"}), 403
+    if _check_password(pw):
+        return jsonify({"token": _issue_token()})
+    return jsonify({"error": "invalid access code"}), 401
+
 
 def _build_console_cmd(raw: str):
     """Translate a typed command into a safe argv list.
@@ -312,6 +374,13 @@ def api_console():
                         mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache",
                                  "X-Accel-Buffering": "no"})
+
+    # session token required — issued by /api/console/auth
+    if not _token_valid(request.args.get("token", "")):
+        def denied():
+            yield "data: [AUTH-REQUIRED] enter the maintenance access code\n\n"
+            yield "data: [DONE] exit=1\n\n"
+        return stream(denied)
 
     if argv is None:
         def refuse():
