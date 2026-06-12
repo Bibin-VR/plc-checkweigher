@@ -746,7 +746,51 @@ lock_source_files() {
 }
 
 # ── 12. RT kernel — installed LAST so only one reboot is needed ───────────────
-# ── 11d. System optimization — disable everything not needed by the tool ─────
+# ── 11d. Debloat — purge applications unused by the PLC stack ────────────────
+# KEEP: chromium (kiosk display), code / VS Code (maintenance), NetworkManager,
+# ssh, lightdm + compositor, rpi-connect, python3, git, nodejs, samba-client,
+# plymouth, build-essential.
+setup_debloat() {
+    step "Removing unused applications  (dedicating resources to the tool) ..."
+    local _PURGE=(
+        firefox                 # kiosk uses chromium
+        chromium-l10n           # browser locale packs — English UI only
+        vlc vlc-l10n            # no media playback on the line
+        realvnc-vnc-server      # Pi Connect (wayvnc) provides screen share
+        rpi-imager rpi-userguide rp-bookshelf piwiz
+        pocketsphinx-en-us      # offline speech model
+        python3-mypy
+        thonny geany geany-common
+        firmware-atheros firmware-mediatek firmware-libertas   # non-Pi WiFi chips
+        avahi-daemon
+        cups cups-daemon cups-browsed
+        bluez                   # BT radio already disabled at boot
+        wolfram-engine sonic-pi scratch scratch2 scratch3 minecraft-pi
+        claws-mail mu-editor smartsim sense-emu-tools
+        libreoffice-core libreoffice-common
+    )
+    local _TO_REMOVE=() _p
+    for _p in "${_PURGE[@]}"; do
+        dpkg -l "$_p" 2>/dev/null | grep -q "^ii" && _TO_REMOVE+=("$_p")
+    done
+    if [[ ${#_TO_REMOVE[@]} -gt 0 ]]; then
+        local _BEFORE
+        _BEFORE=$(df --output=avail / | tail -1)
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq "${_TO_REMOVE[@]}" \
+            > /tmp/debloat.log 2>&1 || warn "Some purges had warnings — see /tmp/debloat.log"
+        ok "Purged: ${_TO_REMOVE[*]}"
+        DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y -qq \
+            >> /tmp/debloat.log 2>&1 || true
+        apt-get clean
+        local _AFTER
+        _AFTER=$(df --output=avail / | tail -1)
+        ok "Orphans removed, apt cache cleared — freed $(( (_AFTER - _BEFORE) / 1024 )) MB"
+    else
+        ok "No unused applications found"
+    fi
+}
+
+# ── 11e. System optimization — disable everything not needed by the tool ─────
 setup_system_optimize() {
     step "System optimization  (disable non-essential services) ..."
 
@@ -920,7 +964,8 @@ main() {
     setup_display             # 11 — LightDM priority, CPU isolation, utmpx
     setup_vscode_priority     # 11b — VS Code: cores 0-2, Nice=-5
     lock_source_files         # 11c — root:root on .py, pi:pi on data/
-    setup_system_optimize     # 11d — disable bluetooth/avahi/cups/apt-timers
+    setup_debloat             # 11d — purge unused applications (~800 MB+)
+    setup_system_optimize     # 11e — disable bluetooth/avahi/cups/apt-timers
     install_rt_kernel         # 12 — LAST, so only one reboot needed
     do_reboot                 # 12 — single reboot applies everything
 }
