@@ -11,14 +11,14 @@
        ════════════════════════════════════════════════════════════════════ */
     :root {
       --sub:    #0A0A0A;   /* deactivated CRT substrate   */
-      --panel:  #0E0E0E;   /* compartment fill            */
-      --line:   #2A2A2A;   /* hairline divider            */
-      --line-2: #3A3A3A;   /* emphasized divider          */
-      --fg:     #EAEAEA;   /* white phosphor              */
-      --dim:    #8A8A8A;   /* secondary phosphor          */
-      --faint:  #555555;   /* tertiary / metadata         */
-      --red:    #FF2A2A;   /* hazard / reject / offline   */
-      --grn:    #4AF626;   /* terminal green — ACCEPT only*/
+      --panel:  #111111;   /* compartment fill            */
+      --line:   #333333;   /* hairline divider            */
+      --line-2: #4A4A4A;   /* emphasized divider          */
+      --fg:     #F2F2F2;   /* white phosphor              */
+      --dim:    #B0B0B0;   /* secondary phosphor          */
+      --faint:  #7E7E7E;   /* tertiary / metadata         */
+      --red:    #FF3B3B;   /* hazard / reject / offline   */
+      --grn:    #52FA30;   /* terminal green — ACCEPT only*/
       --mono: "JetBrains Mono","IBM Plex Mono","Cascadia Mono","SF Mono",
               Consolas,"Liberation Mono","Courier New",monospace;
       --display: "Arial Black","Archivo Black","Helvetica Neue",Arial,sans-serif;
@@ -31,7 +31,7 @@
       background: var(--sub);
       color: var(--fg);
       min-height: 100vh;
-      font-size: 13px;
+      font-size: 14px;
       letter-spacing: .04em;
     }
 
@@ -43,8 +43,8 @@
       z-index: 999;
       background: repeating-linear-gradient(
         0deg,
-        transparent, transparent 2px,
-        rgba(0,0,0,.14) 2px, rgba(0,0,0,.14) 4px
+        transparent, transparent 3px,
+        rgba(0,0,0,.06) 3px, rgba(0,0,0,.06) 5px
       );
     }
 
@@ -70,7 +70,7 @@
       text-transform: uppercase;
     }
     header p {
-      font-size: 10px;
+      font-size: 11px;
       color: var(--dim);
       margin-top: 4px;
       letter-spacing: .12em;
@@ -94,7 +94,7 @@
 
     .status-badge {
       font-family: var(--mono);
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 700;
       letter-spacing: .14em;
       text-transform: uppercase;
@@ -111,7 +111,7 @@
     .hdr-link {
       color: var(--dim);
       text-decoration: none;
-      font-size: 11px;
+      font-size: 12px;
       letter-spacing: .12em;
       text-transform: uppercase;
       padding: 6px 10px;
@@ -145,7 +145,7 @@
     }
     .tab {
       font-family: var(--mono);
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 700;
       letter-spacing: .18em;
       text-transform: uppercase;
@@ -169,7 +169,7 @@
     .tab-fill { flex: 1; }
     .tab-meta {
       align-self: center;
-      font-size: 9px;
+      font-size: 10px;
       letter-spacing: .2em;
       color: var(--faint);
       text-transform: uppercase;
@@ -201,7 +201,7 @@
       flex-shrink: 0;
     }
     .term-head-title {
-      font-size: 11px; font-weight: 700;
+      font-size: 12px; font-weight: 700;
       letter-spacing: .14em; text-transform: uppercase;
     }
     .term-head-title::before { content: "[ "; color: var(--red); }
@@ -210,7 +210,7 @@
     .term-close {
       background: none; border: 1px solid var(--line-2);
       color: var(--fg); font-family: var(--mono);
-      font-size: 13px; cursor: pointer; line-height: 1;
+      font-size: 14px; cursor: pointer; line-height: 1;
       padding: 4px 10px;
     }
     .term-close:hover { border-color: var(--red); color: var(--red); }
@@ -224,7 +224,7 @@
     .qbtn {
       flex: 1;
       font-family: var(--mono);
-      font-size: 10px; font-weight: 700;
+      font-size: 11px; font-weight: 700;
       letter-spacing: .16em; text-transform: uppercase;
       padding: 8px 0;
       background: var(--panel);
@@ -239,7 +239,7 @@
       flex: 1;
       overflow-y: auto;
       padding: 12px 14px;
-      font-size: 11px;
+      font-size: 12px;
       line-height: 1.55;
       letter-spacing: .02em;
       white-space: pre-wrap;
@@ -257,13 +257,13 @@
       padding: 9px 14px;
       flex-shrink: 0;
     }
-    .term-prompt { color: var(--grn); font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .term-prompt { color: var(--grn); font-size: 12px; font-weight: 700; white-space: nowrap; }
     .term-input {
       flex: 1;
       background: none; border: none; outline: none;
       color: var(--fg);
       font-family: var(--mono);
-      font-size: 12px;
+      font-size: 13px;
       letter-spacing: .03em;
       caret-color: var(--grn);
     }
@@ -289,10 +289,10 @@
       position: absolute;
       top: -1px; right: 4px;
       color: var(--faint);
-      font-size: 11px;
+      font-size: 12px;
     }
     .card-title {
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 700;
       letter-spacing: .18em;
       text-transform: uppercase;
@@ -322,12 +322,12 @@
       margin: 14px 0 2px;
       font-variant-numeric: tabular-nums;
     }
-    .weight-value.accept { color: var(--grn); text-shadow: 0 0 18px rgba(74,246,38,.35); }
-    .weight-value.reject { color: var(--red); text-shadow: 0 0 18px rgba(255,42,42,.35); }
+    .weight-value.accept { color: var(--grn); text-shadow: 0 0 18px rgba(82,250,48,.22); }
+    .weight-value.reject { color: var(--red); text-shadow: 0 0 18px rgba(255,59,59,.22); }
     .weight-value.idle   { color: var(--fg); }
     .weight-unit {
       text-align: center;
-      font-size: 10px;
+      font-size: 11px;
       letter-spacing: .3em;
       text-transform: uppercase;
       color: var(--faint);
@@ -343,7 +343,7 @@
     }
     .gauge-ok {
       position: absolute; top: 1px; bottom: 1px;
-      background: rgba(74,246,38,.18);
+      background: rgba(82,250,48,.20);
       border-left:  1px solid var(--grn);
       border-right: 1px solid var(--grn);
     }
@@ -358,12 +358,12 @@
     .gauge-needle.reject { background: var(--red); }
     .gauge-labels {
       display: flex; justify-content: space-between;
-      font-size: 10px; color: var(--faint); margin-top: 5px;
+      font-size: 11px; color: var(--faint); margin-top: 5px;
       letter-spacing: .08em;
     }
     .target-line {
       text-align: center;
-      font-size: 11px;
+      font-size: 12px;
       color: var(--dim);
       margin-top: 10px;
       letter-spacing: .1em;
@@ -395,7 +395,7 @@
     .stat-box .num.accept { color: var(--grn); }
     .stat-box .num.reject { color: var(--red); }
     .stat-box .lbl {
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 700;
       letter-spacing: .22em;
       text-transform: uppercase;
@@ -425,14 +425,14 @@
     }
     .info-item { padding: 9px 12px; background: var(--panel); }
     .info-item .lbl {
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 700;
       letter-spacing: .2em;
       text-transform: uppercase;
       color: var(--faint);
     }
     .info-item .val {
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 700;
       color: var(--fg);
       margin-top: 4px;
@@ -444,14 +444,14 @@
     .items-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 12px;
+      font-size: 13px;
       font-variant-numeric: tabular-nums;
     }
     .items-table th {
       text-align: left;
       padding: 7px 10px;
       color: var(--faint);
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: .2em;
@@ -474,7 +474,7 @@
     /* status flag — bracketed, no pill geometry */
     .pill {
       display: inline-block;
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 700;
       letter-spacing: .1em;
       white-space: nowrap;
@@ -488,7 +488,7 @@
       text-align: center;
       color: var(--faint);
       padding: 42px 0;
-      font-size: 12px;
+      font-size: 13px;
       letter-spacing: .2em;
       text-transform: uppercase;
     }
@@ -507,7 +507,7 @@
       flex: 1;
       min-width: 110px;
       font-family: var(--mono);
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 700;
       letter-spacing: .18em;
       text-transform: uppercase;
@@ -528,7 +528,7 @@
       border: 1px solid var(--line-2);
       color: var(--fg);
       font-family: var(--mono);
-      font-size: 11px;
+      font-size: 12px;
       line-height: 1.55;
       letter-spacing: .02em;
       padding: 12px 14px;
@@ -548,7 +548,7 @@
       justify-content: space-between;
       gap: 12px;
       flex-wrap: wrap;
-      font-size: 9px;
+      font-size: 10px;
       letter-spacing: .18em;
       text-transform: uppercase;
       color: var(--faint);
@@ -870,7 +870,7 @@
         '<td><strong>' + r.weight + ' g</strong></td>' +
         '<td>' + r.target + ' g</td>' +
         '<td><span class="pill ' + (ok ? 'accept' : 'reject') + '">' + r.status + '</span></td>' +
-        '<td style="font-size:.75rem;color:#555">' + r.barcode + '</td>' +
+        '<td style="font-size:.8rem;color:#9a9a9a">' + r.barcode + '</td>' +
         '<td>' + r.pallet + '</td>';
       elBody.appendChild(tr);
     });

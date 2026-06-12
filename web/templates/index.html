@@ -11,14 +11,14 @@
        ════════════════════════════════════════════════════════════════════ */
     :root {
       --sub:    #0A0A0A;
-      --panel:  #0E0E0E;
-      --line:   #2A2A2A;
-      --line-2: #3A3A3A;
-      --fg:     #EAEAEA;
-      --dim:    #8A8A8A;
-      --faint:  #555555;
-      --red:    #FF2A2A;
-      --grn:    #4AF626;
+      --panel:  #111111;
+      --line:   #333333;
+      --line-2: #4A4A4A;
+      --fg:     #F2F2F2;
+      --dim:    #B0B0B0;
+      --faint:  #7E7E7E;
+      --red:    #FF3B3B;
+      --grn:    #52FA30;
       --mono: "JetBrains Mono","IBM Plex Mono","Cascadia Mono","SF Mono",
               Consolas,"Liberation Mono","Courier New",monospace;
       --display: "Arial Black","Archivo Black","Helvetica Neue",Arial,sans-serif;
@@ -31,7 +31,7 @@
       background: var(--sub);
       color: var(--fg);
       min-height: 100vh;
-      font-size: 13px;
+      font-size: 14px;
       letter-spacing: .04em;
     }
 
@@ -42,8 +42,8 @@
       z-index: 999;
       background: repeating-linear-gradient(
         0deg,
-        transparent, transparent 2px,
-        rgba(0,0,0,.14) 2px, rgba(0,0,0,.14) 4px
+        transparent, transparent 3px,
+        rgba(0,0,0,.06) 3px, rgba(0,0,0,.06) 5px
       );
     }
 
@@ -66,7 +66,7 @@
       text-transform: uppercase;
     }
     header p {
-      font-size: 10px;
+      font-size: 11px;
       color: var(--dim);
       margin-top: 4px;
       letter-spacing: .12em;
@@ -75,7 +75,7 @@
     header p::before { content: "// "; color: var(--red); }
 
     .badge {
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 700;
       letter-spacing: .12em;
       text-transform: uppercase;
@@ -87,7 +87,7 @@
     .hdr-live-link {
       color: var(--dim);
       text-decoration: none;
-      font-size: 11px;
+      font-size: 12px;
       letter-spacing: .12em;
       text-transform: uppercase;
       padding: 6px 10px;
@@ -107,7 +107,7 @@
     }
     .tab {
       font-family: var(--mono);
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 700;
       letter-spacing: .18em;
       text-transform: uppercase;
@@ -131,7 +131,7 @@
     .tab-fill { flex: 1; }
     .tab-meta {
       align-self: center;
-      font-size: 9px;
+      font-size: 10px;
       letter-spacing: .2em;
       color: var(--faint);
       text-transform: uppercase;
@@ -149,7 +149,7 @@
     .live-dot.off { background: var(--faint); animation: none; }
     @keyframes blink { 50% { opacity: .45; } }
     .live-label {
-      font-size: 9px;
+      font-size: 10px;
       color: var(--faint);
       letter-spacing: .2em;
       text-transform: uppercase;
@@ -162,7 +162,7 @@
       text-align: center;
       padding: 90px 0;
       color: var(--faint);
-      font-size: 12px;
+      font-size: 13px;
       letter-spacing: .2em;
       text-transform: uppercase;
       line-height: 2.2;
@@ -172,7 +172,7 @@
     .day-group { margin-bottom: 34px; }
 
     .day-label {
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: .22em;
@@ -219,13 +219,13 @@
       text-transform: uppercase;
     }
     .card-info .meta {
-      font-size: 11px;
+      font-size: 12px;
       color: var(--dim);
       margin-top: 4px;
       letter-spacing: .04em;
     }
     .card-info .fname {
-      font-size: 9px;
+      font-size: 10px;
       color: var(--faint);
       margin-top: 3px;
       letter-spacing: .02em;
@@ -238,7 +238,7 @@
       display: inline-flex; align-items: center; justify-content: center; gap: 6px;
       padding: 8px 0;
       font-family: var(--mono);
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 700;
       letter-spacing: .18em;
       text-transform: uppercase;
@@ -278,20 +278,20 @@
       gap: 8px;
     }
     #viewer-title {
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 700;
       letter-spacing: .08em;
       text-transform: uppercase;
       flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     #viewer-title::before { content: "[ DOC ] "; color: var(--red); }
-    #viewer-page-info { font-size: 10px; color: var(--faint); white-space: nowrap; letter-spacing: .12em; }
+    #viewer-page-info { font-size: 11px; color: var(--faint); white-space: nowrap; letter-spacing: .12em; }
     #viewer-close {
       background: none;
       border: 1px solid var(--line-2);
       color: var(--fg);
       font-family: var(--mono);
-      font-size: 13px; cursor: pointer; line-height: 1;
+      font-size: 14px; cursor: pointer; line-height: 1;
       padding: 4px 10px; flex-shrink: 0;
     }
     #viewer-close:hover { border-color: var(--red); color: var(--red); }
@@ -312,7 +312,7 @@
       display: block;
     }
     #viewer-loading {
-      color: var(--faint); font-size: 11px; margin: auto;
+      color: var(--faint); font-size: 12px; margin: auto;
       letter-spacing: .2em; text-transform: uppercase;
     }
 
@@ -328,7 +328,7 @@
     }
     .new-badge {
       color: var(--red);
-      font-size: 9px; font-weight: 700;
+      font-size: 10px; font-weight: 700;
       letter-spacing: .14em; text-transform: uppercase;
       vertical-align: middle;
     }
@@ -345,7 +345,7 @@
       background: var(--sub);
       color: var(--fg);
       padding: 11px 16px;
-      font-size: 11px;
+      font-size: 12px;
       letter-spacing: .08em;
       text-transform: uppercase;
       border: 1px solid var(--line-2);
@@ -366,7 +366,7 @@
       justify-content: space-between;
       gap: 12px;
       flex-wrap: wrap;
-      font-size: 9px;
+      font-size: 10px;
       letter-spacing: .18em;
       text-transform: uppercase;
       color: var(--faint);
