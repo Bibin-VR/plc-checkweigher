@@ -245,6 +245,13 @@ class _RetryWorker(threading.Thread):
             self._drain()
 
     def _drain(self):
+        # Re-sync ledger from disk: a worker also runs inside plc_watcher
+        # now, so another process may have delivered files since our
+        # in-memory cache was loaded. Prevents double-sending.
+        global _sent
+        with _lock:
+            _sent = _load_ledger()
+
         items = _queue_snapshot()
         if not items:
             self._backoff_step = 0

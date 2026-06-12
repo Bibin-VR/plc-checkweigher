@@ -155,9 +155,29 @@ def recover_interrupted_batch():
         print(f"[watcher]   Recovery failed: {e} — CSV kept for manual review.")
 
 
+def start_smb_retry_worker():
+    """
+    Keep the SMB store-and-forward retry worker alive 24/7.
+
+    The RetryWorker normally lives inside plc_reader — but the reader exits
+    at every batch end, killing the worker. If the SMB host was down when a
+    report was generated, the queued PDF would sit undelivered until the
+    NEXT batch started. Running a worker here (the watcher never exits)
+    drains the queue as soon as the host comes back, batch or no batch.
+    """
+    try:
+        import pdf_push
+        pdf_push._ensure_worker()
+        pdf_push._signal.set()   # drain anything queued from previous runs now
+        print("[watcher] SMB retry worker active (drains delivery queue 24/7)")
+    except Exception as e:
+        print(f"[watcher] SMB retry worker unavailable: {e}")
+
+
 def main():
     print("[watcher] PLC Start Watcher started.")
     recover_interrupted_batch()
+    start_smb_retry_worker()
     plc = connect()
 
     try:
