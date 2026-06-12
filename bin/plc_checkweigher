@@ -1238,6 +1238,77 @@ update)
         spin_ok "systemd reloaded"
     fi
 
+    # ── Update Plymouth boot splash ───────────────────────────────────────────
+    _THEME_DIR="/usr/share/plymouth/themes/saismruth"
+    _LOGO_SRC="${INSTALL_DIR}/assets/logo.png"
+    _PLY_CHANGED=0
+
+    if [[ -f "$_LOGO_SRC" ]] && [[ -d "$_THEME_DIR" ]]; then
+        spin_start "Updating boot splash"
+        # Regenerate logo + pre-rendered text (idempotent)
+        "${PYTHON}" - << 'PYEOF' 2>/dev/null && _PLY_CHANGED=1 || true
+from PIL import Image, ImageDraw, ImageFont
+import os, hashlib
+
+THEME = "/usr/share/plymouth/themes/saismruth"
+LOGO  = os.path.join(os.path.dirname(os.path.abspath(
+            "/home/pi/plc_checkweigher/assets/logo.png")), "..", "assets", "logo.png")
+LOGO  = "/home/pi/plc_checkweigher/assets/logo.png"
+TEXT  = "Sai Samarth Engineering"
+
+changed = False
+
+# Logo 400x400
+img = Image.open(LOGO).convert("RGBA").resize((400, 400), Image.LANCZOS)
+logo_dst = os.path.join(THEME, "logo.png")
+import io; buf = io.BytesIO(); img.save(buf, "PNG"); new_bytes = buf.getvalue()
+old_bytes = open(logo_dst, "rb").read() if os.path.exists(logo_dst) else b""
+if new_bytes != old_bytes:
+    open(logo_dst, "wb").write(new_bytes); changed = True
+
+# Pre-rendered text
+FONTS = ["/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]
+font = next((ImageFont.truetype(f, 30) for f in FONTS if os.path.exists(f)), ImageFont.load_default())
+bbox = font.getbbox(TEXT); pad = 10
+tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+canvas = Image.new("RGBA", (tw+pad*2, th+pad*2), (0,0,0,0))
+ImageDraw.Draw(canvas).text((pad-bbox[0], pad-bbox[1]), TEXT, fill=(255,255,255,255), font=font)
+text_dst = os.path.join(THEME, "text.png")
+buf2 = io.BytesIO(); canvas.save(buf2, "PNG"); new2 = buf2.getvalue()
+old2 = open(text_dst, "rb").read() if os.path.exists(text_dst) else b""
+if new2 != old2:
+    open(text_dst, "wb").write(new2); changed = True
+
+import sys; sys.exit(0 if changed else 99)
+PYEOF
+        _PLY_PY_EXIT=$?
+        [[ $_PLY_PY_EXIT -eq 99 ]] && _PLY_CHANGED=0  # exit 99 = no change
+
+        # Patch boot cmdline once (idempotent)
+        _CMDLINE="/boot/firmware/cmdline.txt"
+        if [[ -f "$_CMDLINE" ]]; then
+            if ! grep -q "logo.nologo" "$_CMDLINE"; then
+                sudo sed -i 's/$/ logo.nologo/' "$_CMDLINE" 2>/dev/null && _PLY_CHANGED=1
+            fi
+            if grep -q "loglevel=3" "$_CMDLINE"; then
+                sudo sed -i 's/loglevel=3/loglevel=1/' "$_CMDLINE" 2>/dev/null && _PLY_CHANGED=1
+            fi
+        fi
+        if ! grep -q "^disable_splash=1" /boot/firmware/config.txt 2>/dev/null; then
+            echo "disable_splash=1" | sudo tee -a /boot/firmware/config.txt >/dev/null && _PLY_CHANGED=1
+        fi
+
+        if [[ $_PLY_CHANGED -eq 1 ]]; then
+            spin_ok "Boot splash updated — rebuilding initramfs (~30 s)"
+            sudo update-initramfs -u > /tmp/update_initramfs.log 2>&1 \
+                && ok "initramfs rebuilt — reboot to apply splash changes" \
+                || warn "initramfs warnings — see /tmp/update_initramfs.log"
+        else
+            spin_ok "Boot splash already up to date"
+        fi
+    fi
+
     # ── Restart services ──────────────────────────────────────────────────────
     spin_start "Restarting services"
     sudo systemctl restart plc_watcher plc_web 2>/dev/null
@@ -1254,6 +1325,7 @@ update)
                                || echo -e "  ${R}✗${NC}  plc_web      ${_UWb}"
     echo ""
     ok "Update complete  (${_PREV_SHORT} → ${_NEW_SHORT})"
+    [[ $_PLY_CHANGED -eq 1 ]] && warn "Reboot required for boot splash changes to take effect."
     echo ""
     ;;
 

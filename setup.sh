@@ -16,7 +16,7 @@
 #    7.  SMB       — enter host IP, share name, credentials  → smb_config.py
 #    8.  NetworkManager-wait-online
 #    9.  systemd services (plc_watcher + plc_web)
-#   10.  Boot logo — Plymouth theme with logo.png + "SAI SAMARTH ENGG"
+#   10.  Boot logo — Plymouth theme with logo.png + "Sai Samarth Engineering"
 #   11.  Display   — LightDM priority, CPU isolation, utmpx
 #  11b.  VS Code   — priority daemon: cores 0-2, Nice=-5
 #   12.  PREEMPT_RT kernel  ← installed last so only one reboot is needed
@@ -409,16 +409,45 @@ setup_boot_logo() {
     THEME_DIR="/usr/share/plymouth/themes/saismruth"
     mkdir -p "${THEME_DIR}"
 
-    # ── Logo: resize assets/logo.png to 256×256 and copy into theme ──────────
+    # ── Logo (400×400) + pre-rendered text PNG ───────────────────────────────
     LOGO_SRC="${INSTALL_DIR}/assets/logo.png"
     if [[ -f "${LOGO_SRC}" ]]; then
         "${VENV_DIR}/bin/python3" - << PYEOF
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
+import os, sys
+
+THEME   = "${THEME_DIR}"
+TEXT    = "Sai Samarth Engineering"
+
+# Logo — 400×400 (more visible on HD display)
 img = Image.open("${LOGO_SRC}").convert("RGBA")
-img.thumbnail((256, 256), Image.LANCZOS)
-img.save("${THEME_DIR}/logo.png", "PNG")
+img = img.resize((400, 400), Image.LANCZOS)
+img.save(os.path.join(THEME, "logo.png"), "PNG")
+
+# Pre-rendered company name (white on transparent) — avoids font issues in initramfs
+FONT_PATHS = [
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+]
+font = None
+for fp in FONT_PATHS:
+    if os.path.exists(fp):
+        font = ImageFont.truetype(fp, 30)
+        break
+if font is None:
+    font = ImageFont.load_default()
+
+bbox = font.getbbox(TEXT)
+tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+pad = 10
+canvas = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (0, 0, 0, 0))
+ImageDraw.Draw(canvas).text((pad - bbox[0], pad - bbox[1]), TEXT,
+                             fill=(255, 255, 255, 255), font=font)
+canvas.save(os.path.join(THEME, "text.png"), "PNG")
+print("  logo 400x400, text", canvas.size)
 PYEOF
-        ok "Logo installed (256×256)  →  ${THEME_DIR}/logo.png"
+        ok "Logo + text images installed  →  ${THEME_DIR}/"
     else
         warn "assets/logo.png not found — splash will show text only"
     fi
@@ -426,8 +455,8 @@ PYEOF
     # ── Theme config file ─────────────────────────────────────────────────────
     cat > "${THEME_DIR}/saismruth.plymouth" << 'EOF'
 [Plymouth Theme]
-Name=SAI SAMARTH ENGG
-Description=PLC Check-Weigher Boot Screen — SAI SAMARTH ENGG
+Name=Sai Samarth Engineering
+Description=PLC Check-Weigher Boot Screen — Sai Samarth Engineering
 ModuleName=script
 
 [script]
@@ -435,30 +464,30 @@ ImageDir=/usr/share/plymouth/themes/saismruth
 ScriptFile=/usr/share/plymouth/themes/saismruth/saismruth.script
 EOF
 
-    # ── Plymouth script: logo centred, text below ─────────────────────────────
+    # ── Plymouth script: logo + pre-rendered text, both centred ──────────────
     cat > "${THEME_DIR}/saismruth.script" << 'EOF'
-# ── SAI SAMARTH ENGG — Boot Splash ────────────────────────────────────────────
+# Sai Samarth Engineering — Boot Splash
 Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
 Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
 
 screen_w = Window.GetWidth();
 screen_h = Window.GetHeight();
 
-# ── Logo (centred, slightly above middle to leave room for text) ──────────────
+# Logo — centred, slightly above middle
 logo_img = Image("logo.png");
 logo_w   = logo_img.GetWidth();
 logo_h   = logo_img.GetHeight();
 logo_x   = (screen_w - logo_w) / 2;
-logo_y   = (screen_h - logo_h) / 2 - 40;
+logo_y   = (screen_h - logo_h) / 2 - 50;
 
 logo_sprite = Sprite(logo_img);
 logo_sprite.SetPosition(logo_x, logo_y, 0);
 
-# ── Company name centred below logo ───────────────────────────────────────────
-text_img = Image.Text("SAI SAMARTH ENGG", 1.0, 1.0, 1.0, 1.0, "Sans Bold 20");
+# Company name — pre-rendered PNG, centred below logo
+text_img = Image("text.png");
 text_w   = text_img.GetWidth();
 text_x   = (screen_w - text_w) / 2;
-text_y   = logo_y + logo_h + 22;
+text_y   = logo_y + logo_h + 24;
 
 text_sprite = Sprite(text_img);
 text_sprite.SetPosition(text_x, text_y, 1);
@@ -467,6 +496,18 @@ EOF
     # ── Activate theme ────────────────────────────────────────────────────────
     plymouth-set-default-theme saismruth
     ok "Plymouth theme set  →  saismruth"
+
+    # ── Suppress all other boot visuals ──────────────────────────────────────
+    # Hide Pi firmware rainbow square
+    grep -q "^disable_splash=1" /boot/firmware/config.txt \
+        || echo "disable_splash=1" >> /boot/firmware/config.txt
+
+    # Hide kernel Tux logo + reduce loglevel so only our splash is visible
+    if ! grep -q "logo.nologo" /boot/firmware/cmdline.txt; then
+        sed -i 's/$/ logo.nologo/' /boot/firmware/cmdline.txt
+    fi
+    sed -i 's/loglevel=3/loglevel=1/' /boot/firmware/cmdline.txt 2>/dev/null || true
+    ok "Boot cmdline patched  (logo.nologo, loglevel=1, disable_splash=1)"
 
     # Rebuild current initramfs so Plymouth is included.
     # The RT kernel's post-install will create its own initramfs with Plymouth
@@ -748,7 +789,7 @@ main() {
     setup_smb                 # 7  — interactive SMB config → smb_config.py
     setup_network_online      # 8
     install_services          # 9
-    setup_boot_logo           # 10 — Plymouth: logo + "SAI SAMARTH ENGG"
+    setup_boot_logo           # 10 — Plymouth: logo + "Sai Samarth Engineering"
     setup_display             # 11 — LightDM priority, CPU isolation, utmpx
     setup_vscode_priority     # 11b — VS Code: cores 0-2, Nice=-5
     lock_source_files         # 11c — root:root on .py, pi:pi on data/
