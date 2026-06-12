@@ -622,15 +622,27 @@ setup_vscode_priority() {
 
     cat > /usr/local/bin/vscode-priority-daemon << 'DAEMON'
 #!/usr/bin/env bash
-# Apply CPU affinity (cores 0-2) and Nice=-5 to VS Code server processes.
+# Apply CPU affinity (cores 0-2) and Nice=-5 to remote-dev processes:
+#   - VS Code server + all its extensions (extension host, Claude Code,
+#     GitHub, language servers — anything under ~/.vscode-server)
+#   - standalone claude CLI sessions (run outside VS Code)
+#   - sshd listener + active SSH sessions
 # Core 3 is reserved exclusively for the SCHED_FIFO PLC process.
-# Runs every 60s so newly-spawned extension host processes are caught promptly.
-while true; do
-    mapfile -t pids < <(pgrep -u pi -f '\.vscode-server' 2>/dev/null || true)
-    for pid in "${pids[@]}"; do
+# Runs every 60s so newly-spawned processes are caught promptly.
+prioritize() {
+    local pid
+    for pid in "$@"; do
         taskset -cp 0-2 "$pid" >/dev/null 2>&1 || true
         renice -n -5 -p "$pid" >/dev/null 2>&1 || true
     done
+}
+while true; do
+    # VS Code server tree — extension binaries live under .vscode-server/extensions/
+    prioritize $(pgrep -u pi -f '\.vscode-server' 2>/dev/null)
+    # Standalone claude CLI (plain terminal, outside the VS Code tree)
+    prioritize $(pgrep -u pi -x claude 2>/dev/null)
+    # SSH — listener and per-session processes (keep off the RT core)
+    prioritize $(pgrep -x sshd 2>/dev/null) $(pgrep -x sshd-session 2>/dev/null)
     sleep 60
 done
 DAEMON
