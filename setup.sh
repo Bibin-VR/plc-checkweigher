@@ -730,14 +730,16 @@ setup_system_optimize() {
         || echo "dtoverlay=disable-bt" >> "${BOOT_FW}/config.txt"
     ok "Bluetooth radio disabled at boot  (dtoverlay=disable-bt)"
 
-    # Fast, bounded shutdown — no unit may hold a reboot longer than 20 s
-    # (systemd default is 90 s per unit; one hung service = very slow poweroff)
+    # Fast, bounded shutdown — no unit may hold a reboot longer than 10 s
+    # (systemd default is 90 s per unit; one hung service = very slow poweroff).
+    # plc_watcher keeps its own TimeoutStopSec=10 for batch finalization;
+    # going below 10 s globally risks cutting off journald/fs sync on SD card.
     mkdir -p /etc/systemd/system.conf.d
     cat > /etc/systemd/system.conf.d/plc-shutdown.conf << 'EOF'
 [Manager]
-DefaultTimeoutStopSec=20s
+DefaultTimeoutStopSec=10s
 EOF
-    ok "Shutdown timeout capped at 20 s per unit"
+    ok "Shutdown timeout capped at 10 s per unit"
 
     # Persistent journal (capped at 64 MB) — boot/shutdown logs survive
     # reboots so hangs and crashes can actually be diagnosed afterwards
