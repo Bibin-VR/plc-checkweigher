@@ -169,19 +169,21 @@ install_cli() {
         warn "bin/plc_checkweigher not found — skipping CLI install"
     fi
 
-    # Scoped sudoers rule: web dashboard maintenance console can run the
-    # locked root-owned CLI's fix command (and nothing else) without password.
+    # Scoped sudoers rule: web maintenance terminal can run whitelisted
+    # subcommands of the locked root-owned CLI — and nothing else.
+    # Interactive/destructive subcommands (wifi, smb-config, uninstall,
+    # hotspot) are deliberately NOT listed.
     cat > /tmp/010_plc-web-fix << 'EOF'
-# Web dashboard maintenance console — allows the locked, root-owned CLI
-# to run its fix command from plc_web (User=pi). Scope: fix only.
-pi ALL=(root) NOPASSWD: /usr/local/bin/plc_checkweigher fix, /usr/local/bin/plc_checkweigher fix *
+# Web dashboard maintenance terminal — allows the locked, root-owned CLI
+# to run whitelisted maintenance subcommands from plc_web (User=pi).
+pi ALL=(root) NOPASSWD: /usr/local/bin/plc_checkweigher fix, /usr/local/bin/plc_checkweigher fix *, /usr/local/bin/plc_checkweigher status, /usr/local/bin/plc_checkweigher restart, /usr/local/bin/plc_checkweigher start, /usr/local/bin/plc_checkweigher stop, /usr/local/bin/plc_checkweigher update
 EOF
     if visudo -c -f /tmp/010_plc-web-fix &>/dev/null; then
         cp /tmp/010_plc-web-fix /etc/sudoers.d/010_plc-web-fix
         chmod 440 /etc/sudoers.d/010_plc-web-fix
-        ok "Web maintenance sudoers rule installed  (fix only, validated)"
+        ok "Web maintenance sudoers rule installed  (whitelisted subcommands)"
     else
-        warn "sudoers rule failed validation — web FIX button will not work"
+        warn "sudoers rule failed validation — web maintenance terminal limited"
     fi
     rm -f /tmp/010_plc-web-fix
 }

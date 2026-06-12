@@ -1450,27 +1450,29 @@ PYEOF
         ulog "CONFIG: journal OK"
     fi
 
-    # 9b. Web maintenance sudoers rule (dashboard FIX button)
+    # 9b. Web maintenance sudoers rule (dashboard terminal)
     spin_start "Web maintenance sudoers rule"
     _SUDOERS_F="/etc/sudoers.d/010_plc-web-fix"
-    if [[ ! -f "$_SUDOERS_F" ]]; then
+    # Content-aware: rewrite if missing OR still the old fix-only version
+    if [[ ! -f "$_SUDOERS_F" ]] \
+       || ! sudo grep -q "plc_checkweigher update" "$_SUDOERS_F" 2>/dev/null; then
         cat > /tmp/010_plc-web-fix << 'SUDOEOF'
-# Web dashboard maintenance console — allows the locked, root-owned CLI
-# to run its fix command from plc_web (User=pi). Scope: fix only.
-pi ALL=(root) NOPASSWD: /usr/local/bin/plc_checkweigher fix, /usr/local/bin/plc_checkweigher fix *
+# Web dashboard maintenance terminal — allows the locked, root-owned CLI
+# to run whitelisted maintenance subcommands from plc_web (User=pi).
+pi ALL=(root) NOPASSWD: /usr/local/bin/plc_checkweigher fix, /usr/local/bin/plc_checkweigher fix *, /usr/local/bin/plc_checkweigher status, /usr/local/bin/plc_checkweigher restart, /usr/local/bin/plc_checkweigher start, /usr/local/bin/plc_checkweigher stop, /usr/local/bin/plc_checkweigher update
 SUDOEOF
         if sudo visudo -c -f /tmp/010_plc-web-fix &>/dev/null; then
             sudo cp /tmp/010_plc-web-fix "$_SUDOERS_F"
             sudo chmod 440 "$_SUDOERS_F"
-            spin_ok "Sudoers rule installed (web FIX button enabled)"
-            ulog "FIXED: web maintenance sudoers rule installed"
+            spin_ok "Sudoers rule installed/upgraded (web terminal enabled)"
+            ulog "FIXED: web maintenance sudoers rule installed/upgraded"
         else
             spin_warn "Sudoers rule failed validation — skipped"
             ulog "WARN: sudoers rule validation failed"
         fi
         rm -f /tmp/010_plc-web-fix
     else
-        spin_ok "Sudoers rule present"
+        spin_ok "Sudoers rule current"
         ulog "CONFIG: web sudoers OK"
     fi
 

@@ -96,6 +96,47 @@
     }
     .hdr-live-link:hover { color: var(--fg); border-color: var(--fg); }
 
+    /* ── TAB MODULE — remote system navigation ── */
+    .tab-bar {
+      display: flex;
+      align-items: stretch;
+      border-bottom: 1px solid var(--line-2);
+      background: var(--sub);
+      padding: 0 22px;
+      gap: 1px;
+    }
+    .tab {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--dim);
+      text-decoration: none;
+      padding: 9px 22px;
+      border: 1px solid var(--line);
+      border-bottom: none;
+      background: var(--sub);
+      position: relative;
+      top: 1px;
+    }
+    .tab:hover { color: var(--fg); }
+    .tab.active {
+      color: var(--fg);
+      background: var(--panel);
+      border-color: var(--line-2);
+      border-bottom: 1px solid var(--panel);
+    }
+    .tab.active::before { content: "▸ "; color: var(--red); }
+    .tab-fill { flex: 1; }
+    .tab-meta {
+      align-self: center;
+      font-size: 9px;
+      letter-spacing: .2em;
+      color: var(--faint);
+      text-transform: uppercase;
+    }
+
     /* link status — square indicator, terminal green = SSE link up */
     .live-dot {
       width: 10px; height: 10px;
@@ -340,7 +381,6 @@
     <p>Production Report Archive</p>
   </div>
   <div style="display:flex;align-items:center;gap:14px;flex-shrink:0;flex-wrap:wrap;">
-    <a href="/live" class="hdr-live-link">Live &gt;&gt;&gt;</a>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="live-dot off" id="live-dot"></span>
       <span class="live-label">Link</span>
@@ -348,6 +388,14 @@
     <span class="badge" id="total-badge">{{ total }} report{{ 's' if total != 1 else '' }}</span>
   </div>
 </header>
+
+<!-- tab module — remote system navigation -->
+<nav class="tab-bar">
+  <a class="tab" href="/live">Ops</a>
+  <a class="tab active" href="/">Archive</a>
+  <span class="tab-fill"></span>
+  <span class="tab-meta">REMOTE // CW-2400</span>
+</nav>
 
 <main>
   {% if not groups %}

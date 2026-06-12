@@ -13,7 +13,7 @@ import subprocess
 import threading
 import time
 from datetime import datetime
-from flask import Flask, Response, jsonify, send_from_directory, abort, render_template, stream_with_context
+from flask import Flask, Response, jsonify, request, send_from_directory, abort, render_template, stream_with_context
 
 LIVE_STATE_PATH = "/tmp/plc_live.json"
 
@@ -250,6 +250,110 @@ def api_cmd(name):
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Browser terminal — accepts ONLY plc_checkweigher commands, typed freely.
+# Parsing is strict: tokens are charset-checked, subcommands and flags are
+# whitelisted, argv is built as a list (never a shell). Interactive
+# subcommands are refused with a pointer to SSH.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CLI = "/usr/local/bin/plc_checkweigher"
+_FIX_FLAGS = {"-wifi", "-health", "-programs", "-errors"}
+_TOKEN_RE  = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _build_console_cmd(raw: str):
+    """Translate a typed command into a safe argv list.
+    Returns (argv, echo, error) — argv None when refused."""
+    toks = raw.strip().split()
+    if not toks:
+        return None, "", "empty command"
+    if toks[0] in ("plc_checkweigher", "plc-checkweigher", "plc"):
+        toks = toks[1:]
+    if not toks:
+        return None, "", "no subcommand — try: help"
+    for t in toks:
+        if not _TOKEN_RE.fullmatch(t):
+            return None, "", f"illegal token: {t}"
+
+    sub, args = toks[0].lower(), toks[1:]
+    echo = "plc_checkweigher " + " ".join([sub] + args)
+
+    # logs → bounded follow via journalctl (runs as pi, killable on disconnect)
+    if sub == "logs" and not args:
+        return (["journalctl", "-u", "plc_watcher", "-u", "plc_web",
+                 "-f", "--no-pager", "-n", "60"], echo, None)
+    # root-needed subcommands → locked CLI via scoped NOPASSWD rule
+    if sub == "fix" and all(a in _FIX_FLAGS for a in args):
+        return (["sudo", "-n", _CLI, "fix", *args], echo, None)
+    if sub in ("status", "restart", "start", "stop", "update") and not args:
+        return (["sudo", "-n", _CLI, sub], echo, None)
+    # safe to run directly as pi
+    if sub in ("queue", "help", "push-test") and not args:
+        return ([_CLI, sub], echo, None)
+    if sub in ("display", "hotspot") and args == ["status"]:
+        return ([_CLI, sub, "status"], echo, None)
+    # explicit refusals
+    if sub in ("wifi", "smb-config", "uninstall") \
+       or (sub in ("display", "hotspot") and args != ["status"]):
+        return None, echo, f"'{sub}' is interactive or destructive — use an SSH session"
+    return None, echo, f"unknown command: {sub} — try: help"
+
+
+@app.route("/api/console")
+def api_console():
+    raw = (request.args.get("cmd") or "")[:200]
+    argv, echo, err = _build_console_cmd(raw)
+
+    def stream(lines_fn):
+        return Response(stream_with_context(lines_fn()),
+                        mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache",
+                                 "X-Accel-Buffering": "no"})
+
+    if argv is None:
+        def refuse():
+            yield f"data: $ {echo or raw}\n\n"
+            yield f"data: [REFUSED] {err}\n\n"
+            yield "data: [DONE] exit=1\n\n"
+        return stream(refuse)
+
+    if not _CMD_LOCK.acquire(blocking=False):
+        def busy():
+            yield "data: [BUSY] another command is running — wait for it to finish\n\n"
+            yield "data: [DONE] exit=1\n\n"
+        return stream(busy)
+
+    def generate():
+        proc = None
+        try:
+            yield f"data: $ {echo}\n\n"
+            proc = subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+            )
+            for line in proc.stdout:
+                clean = _ANSI_RE.sub("", line).rstrip()
+                yield f"data: {clean}\n\n"
+            proc.wait()
+            yield f"data: [DONE] exit={proc.returncode}\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            if proc is not None and proc.poll() is None:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                except Exception:
+                    pass   # root-owned commands are finite — let them finish
+            _CMD_LOCK.release()
+
+    return stream(generate)
 
 
 @app.route("/pdf/<path:filename>")

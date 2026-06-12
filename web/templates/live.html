@@ -120,6 +120,155 @@
     }
     .hdr-link:hover { color: var(--fg); border-color: var(--fg); }
 
+    /* console trigger — square, terminal glyph */
+    .console-btn {
+      font-family: var(--mono);
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--fg);
+      background: var(--panel);
+      border: 1px solid var(--line-2);
+      padding: 5px 12px;
+      cursor: pointer;
+      letter-spacing: 0;
+    }
+    .console-btn:hover { border-color: var(--red); color: var(--red); }
+
+    /* ── TAB MODULE — remote system navigation ── */
+    .tab-bar {
+      display: flex;
+      align-items: stretch;
+      border-bottom: 1px solid var(--line-2);
+      background: var(--sub);
+      padding: 0 22px;
+      gap: 1px;
+    }
+    .tab {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--dim);
+      text-decoration: none;
+      padding: 9px 22px;
+      border: 1px solid var(--line);
+      border-bottom: none;
+      background: var(--sub);
+      position: relative;
+      top: 1px;
+    }
+    .tab:hover { color: var(--fg); }
+    .tab.active {
+      color: var(--fg);
+      background: var(--panel);
+      border-color: var(--line-2);
+      border-bottom: 1px solid var(--panel);
+    }
+    .tab.active::before { content: "▸ "; color: var(--red); }
+    .tab-fill { flex: 1; }
+    .tab-meta {
+      align-self: center;
+      font-size: 9px;
+      letter-spacing: .2em;
+      color: var(--faint);
+      text-transform: uppercase;
+    }
+
+    /* ── TERMINAL OVERLAY — restricted maintenance session ── */
+    .term-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.85);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    .term-overlay.active { display: flex; }
+    .term-window {
+      background: var(--sub);
+      border: 1px solid var(--line-2);
+      width: 94vw; max-width: 860px;
+      height: 80vh;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    .term-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px;
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--line-2);
+      flex-shrink: 0;
+    }
+    .term-head-title {
+      font-size: 11px; font-weight: 700;
+      letter-spacing: .14em; text-transform: uppercase;
+    }
+    .term-head-title::before { content: "[ "; color: var(--red); }
+    .term-head-title::after  { content: " ]"; color: var(--red); }
+    .term-head-actions { display: flex; gap: 1px; }
+    .term-close {
+      background: none; border: 1px solid var(--line-2);
+      color: var(--fg); font-family: var(--mono);
+      font-size: 13px; cursor: pointer; line-height: 1;
+      padding: 4px 10px;
+    }
+    .term-close:hover { border-color: var(--red); color: var(--red); }
+
+    .term-quick {
+      display: flex; gap: 1px;
+      background: var(--line);
+      border-bottom: 1px solid var(--line);
+      flex-shrink: 0;
+    }
+    .qbtn {
+      flex: 1;
+      font-family: var(--mono);
+      font-size: 10px; font-weight: 700;
+      letter-spacing: .16em; text-transform: uppercase;
+      padding: 8px 0;
+      background: var(--panel);
+      color: var(--dim);
+      border: none; cursor: pointer;
+    }
+    .qbtn:hover  { background: var(--fg); color: var(--sub); }
+    .qbtn.stop   { color: var(--red); }
+    .qbtn.stop:hover { background: var(--red); color: var(--fg); }
+
+    .term-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 14px;
+      font-size: 11px;
+      line-height: 1.55;
+      letter-spacing: .02em;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: var(--fg);
+    }
+    .term-body:empty::before {
+      content: ">>> MAINTENANCE SESSION — plc_checkweigher commands only. Type 'help' for the command list.";
+      color: var(--faint);
+    }
+
+    .term-input-row {
+      display: flex; align-items: center; gap: 8px;
+      border-top: 1px solid var(--line-2);
+      padding: 9px 14px;
+      flex-shrink: 0;
+    }
+    .term-prompt { color: var(--grn); font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .term-input {
+      flex: 1;
+      background: none; border: none; outline: none;
+      color: var(--fg);
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: .03em;
+      caret-color: var(--grn);
+    }
+    .term-input:disabled { opacity: .4; }
+
     /* ════════════════ MAIN ════════════════ */
     main {
       max-width: 1180px;
@@ -429,9 +578,18 @@
   </div>
   <div class="hdr-right">
     <span class="status-badge offline" id="status-badge">OFFLINE</span>
-    <a class="hdr-link" href="/">Reports &gt;&gt;&gt;</a>
+    <button class="console-btn" id="btn-console" onclick="openConsole()"
+            title="Maintenance console">&gt;_</button>
   </div>
 </header>
+
+<!-- tab module — remote system navigation -->
+<nav class="tab-bar">
+  <a class="tab active" href="/live">Ops</a>
+  <a class="tab" href="/">Archive</a>
+  <span class="tab-fill"></span>
+  <span class="tab-meta">REMOTE // CW-2400</span>
+</nav>
 
 <main>
 
@@ -514,19 +672,33 @@
     </div>
   </div>
 
-  <!-- maintenance console -->
-  <div class="card" style="margin-top:14px">
-    <div class="card-title">Maintenance Console</div>
-    <div class="maint-bar">
-      <button class="mbtn" id="btn-status" onclick="runCmd('status')">Status</button>
-      <button class="mbtn" id="btn-fix"    onclick="runCmd('fix')">Fix</button>
-      <button class="mbtn" id="btn-logs"   onclick="runCmd('logs')">Logs</button>
-      <button class="mbtn stop" id="btn-stop" onclick="stopCmd()" disabled>Stop</button>
-    </div>
-    <pre class="term-out" id="term-out"></pre>
-  </div>
-
 </main>
+
+<!-- maintenance terminal — restricted to plc_checkweigher commands -->
+<div class="term-overlay" id="term-overlay" onclick="if(event.target===this)closeConsole()">
+  <div class="term-window">
+    <div class="term-head">
+      <span class="term-head-title">Maintenance Console</span>
+      <span style="font-size:9px;color:var(--faint);letter-spacing:.18em;">RESTRICTED // PLC_CHECKWEIGHER ONLY</span>
+      <button class="term-close" onclick="closeConsole()">✕</button>
+    </div>
+    <div class="term-quick">
+      <button class="qbtn" onclick="runConsole('status')">Status</button>
+      <button class="qbtn" onclick="runConsole('fix')">Fix</button>
+      <button class="qbtn" onclick="runConsole('logs')">Logs</button>
+      <button class="qbtn" onclick="runConsole('queue')">Queue</button>
+      <button class="qbtn" onclick="runConsole('update')">Update</button>
+      <button class="qbtn stop" id="btn-stop" onclick="stopConsole()" disabled>Stop</button>
+    </div>
+    <pre class="term-body" id="term-out"></pre>
+    <div class="term-input-row">
+      <span class="term-prompt" id="term-prompt">maint@cw-2400:~$</span>
+      <input class="term-input" id="term-input" type="text"
+             autocomplete="off" spellcheck="false"
+             placeholder="plc_checkweigher …" />
+    </div>
+  </div>
+</div>
 
 <div class="sys-strip">
   <span>UNIT / CW-2400</span>
@@ -740,28 +912,44 @@
   }
   connectEvents();
 
-  /* ── Maintenance console — stream CLI output via SSE ── */
-  const termOut  = document.getElementById('term-out');
-  const cmdBtns  = {
-    status: document.getElementById('btn-status'),
-    fix:    document.getElementById('btn-fix'),
-    logs:   document.getElementById('btn-logs'),
-  };
-  const btnStop  = document.getElementById('btn-stop');
-  let   cmdSrc   = null;
-  const TERM_MAX_LINES = 600;
+  /* ── Maintenance terminal — restricted plc_checkweigher session ──
+     Server enforces the whitelist; this mirror exists only for instant
+     feedback. Output streams over SSE from /api/console. */
+  const termOverlay = document.getElementById('term-overlay');
+  const termOut     = document.getElementById('term-out');
+  const termInput   = document.getElementById('term-input');
+  const btnStop     = document.getElementById('btn-stop');
+  let   cmdSrc      = null;
+  let   cmdHistory  = [];
+  let   histIdx     = -1;
+  const TERM_MAX_LINES = 800;
 
-  function setBusy(name) {
-    Object.entries(cmdBtns).forEach(([k, b]) => {
-      b.disabled = !!name;
-      b.classList.toggle('active', k === name);
-    });
-    btnStop.disabled = !name;
+  const LOCAL_HELP = [
+    'Available commands (plc_checkweigher prefix optional):',
+    '  status            full system diagnostic',
+    '  fix [-wifi -health -programs -errors]',
+    '  logs              follow service logs (Stop to end)',
+    '  queue             SMB delivery queue + ledger',
+    '  update            pull latest code + verify system config',
+    '  restart | start | stop    service control',
+    '  push-test         push latest PDF to SMB now',
+    '  display status | hotspot status',
+    '',
+    'Interactive commands (wifi, smb-config, hotspot on/scan,',
+    'uninstall) are blocked here — use an SSH session.',
+  ];
+
+  function openConsole() {
+    termOverlay.classList.add('active');
+    termInput.focus();
+  }
+  function closeConsole() {
+    stopConsole();
+    termOverlay.classList.remove('active');
   }
 
   function termAppend(line) {
     termOut.textContent += line + '\n';
-    // bound memory on long-running logs follow
     const lines = termOut.textContent.split('\n');
     if (lines.length > TERM_MAX_LINES) {
       termOut.textContent = lines.slice(lines.length - TERM_MAX_LINES).join('\n');
@@ -769,26 +957,64 @@
     termOut.scrollTop = termOut.scrollHeight;
   }
 
-  function runCmd(name) {
-    stopCmd();
-    termOut.textContent = '';
-    setBusy(name);
-    cmdSrc = new EventSource('/api/cmd/' + name);
-    cmdSrc.onmessage = ev => {
-      termAppend(ev.data);
-      if (ev.data.startsWith('[DONE]')) stopCmd(true);
-    };
-    cmdSrc.onerror = () => stopCmd(true);
+  function setBusy(busy) {
+    termInput.disabled = busy;
+    btnStop.disabled   = !busy;
+    if (!busy) termInput.focus();
   }
 
-  function stopCmd(finished) {
+  function runConsole(raw) {
+    raw = (raw || '').trim();
+    if (!raw) return;
+    stopConsole(true);
+
+    cmdHistory.push(raw);
+    histIdx = cmdHistory.length;
+
+    // local-only conveniences
+    const bare = raw.replace(/^(plc_checkweigher|plc-checkweigher|plc)\s+/, '');
+    if (bare === 'clear' || bare === 'cls') { termOut.textContent = ''; return; }
+    if (bare === 'help') {
+      termAppend('$ help');
+      LOCAL_HELP.forEach(termAppend);
+      return;
+    }
+
+    setBusy(true);
+    cmdSrc = new EventSource('/api/console?cmd=' + encodeURIComponent(raw));
+    cmdSrc.onmessage = ev => {
+      termAppend(ev.data);
+      if (ev.data.startsWith('[DONE]')) stopConsole();
+    };
+    cmdSrc.onerror = () => stopConsole();
+  }
+
+  function stopConsole(silent) {
     if (cmdSrc) {
       cmdSrc.close();
       cmdSrc = null;
-      if (!finished) termAppend('[STOPPED]');
+      if (!silent) termAppend('[STOPPED]');
     }
-    setBusy(null);
+    setBusy(false);
   }
+
+  termInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const v = termInput.value;
+      termInput.value = '';
+      runConsole(v);
+    } else if (e.key === 'ArrowUp') {
+      if (histIdx > 0) { histIdx--; termInput.value = cmdHistory[histIdx] || ''; }
+      e.preventDefault();
+    } else if (e.key === 'ArrowDown') {
+      if (histIdx < cmdHistory.length) { histIdx++; termInput.value = cmdHistory[histIdx] || ''; }
+      e.preventDefault();
+    }
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && termOverlay.classList.contains('active')) closeConsole();
+  });
 </script>
 
 </body>
