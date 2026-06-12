@@ -776,6 +776,10 @@ setup_debloat() {
     if [[ ${#_TO_REMOVE[@]} -gt 0 ]]; then
         local _BEFORE
         _BEFORE=$(df --output=avail / | tail -1)
+        # Pin keep-list packages so autoremove can never sweep them even if
+        # apt has them marked auto-installed (observed with desktop code).
+        apt-mark manual chromium code git nodejs samba-client network-manager \
+            &>/dev/null || true
         DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq "${_TO_REMOVE[@]}" \
             > /tmp/debloat.log 2>&1 || warn "Some purges had warnings — see /tmp/debloat.log"
         ok "Purged: ${_TO_REMOVE[*]}"
