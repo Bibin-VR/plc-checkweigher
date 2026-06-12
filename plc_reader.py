@@ -13,6 +13,7 @@ passes the check-weigher.
 import csv
 import json
 import os
+import signal
 import struct
 import time
 from datetime import datetime
@@ -38,6 +39,34 @@ def _write_kiosk(data: dict):
             json.dump(data, f)
         os.replace(tmp, KIOSK_STATE_PATH)
     except Exception:
+        pass
+
+
+# ── Batch state persistence — power-failure / unexpected-shutdown recovery ───
+# Saved after every item (atomic write + fsync). If the Pi loses power
+# mid-batch, plc_watcher finds this file at next boot and builds a
+# RECOVERED PDF from the on-disk CSV, so no batch is ever lost.
+_BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+BATCH_STATE = os.path.join(_BASE_DIR, "data", "batch_state.json")
+
+
+def _save_batch_state(state: dict):
+    try:
+        os.makedirs(os.path.dirname(BATCH_STATE), exist_ok=True)
+        tmp = BATCH_STATE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, BATCH_STATE)
+    except Exception as e:
+        print(f"  [state] save failed: {e}")
+
+
+def _clear_batch_state():
+    try:
+        os.remove(BATCH_STATE)
+    except OSError:
         pass
 
 
@@ -223,6 +252,12 @@ def gen_batch_pdf(batch_data: dict, event_rows: list,
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    # systemd sends SIGTERM on stop/reboot — convert to KeyboardInterrupt so
+    # the batch is finalized (PDF + push) instead of dying mid-write.
+    def _on_sigterm(_sig, _frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
     plc = connect()
     os.makedirs(PDF_DIR, exist_ok=True)
 
@@ -274,6 +309,7 @@ def main():
             if gen_batch_pdf(batch_data, event_rows,
                              start_dt=batch_start_dt, stop_dt=stop_dt):
                 os.remove(csv_path)
+                _clear_batch_state()
             else:
                 print(f"  [CSV] Kept (PDF failed): {csv_path}")
         else:
@@ -281,6 +317,7 @@ def main():
                 os.remove(csv_path)
             except OSError:
                 pass
+            _clear_batch_state()
         event_rows     = []
         batch_start_dt = ""
         csv_path, csv_file, csv_writer = open_csv()
@@ -294,6 +331,7 @@ def main():
             if gen_batch_pdf(batch_data, event_rows,
                              start_dt=batch_start_dt, stop_dt=stop_dt):
                 os.remove(csv_path)
+                _clear_batch_state()
             else:
                 print(f"  [CSV] Kept (PDF failed): {csv_path}")
         else:
@@ -302,6 +340,7 @@ def main():
                 os.remove(csv_path)
             except OSError:
                 pass
+            _clear_batch_state()
 
     try:
         while True:
@@ -474,6 +513,20 @@ def main():
                     row["read_weight"], row["status"], row["barcode"],
                 ])
                 csv_file.flush()
+                os.fsync(csv_file.fileno())   # survive power cuts
+
+                # Persist batch state so an unexpected shutdown is recoverable
+                _save_batch_state({
+                    "active":     True,
+                    "ts":         time.time(),
+                    "csv_path":   csv_path,
+                    "batch_data": {k: v for k, v in batch_data.items()
+                                   if isinstance(v, (str, int, float, bool, type(None)))},
+                    "start_dt":   batch_start_dt,
+                    "item_count": item_count,
+                    "accepted":   accepted,
+                    "rejected":   rejected,
+                })
 
                 display(data, item_count, reason, accepted, rejected)
                 last_status = reason
@@ -547,7 +600,7 @@ def main():
             time.sleep(max(0.0, BIT_POLL - elapsed))
 
     except KeyboardInterrupt:
-        end_batch("Ctrl+C")
+        end_batch("stop signal / shutdown")
 
 
 if __name__ == "__main__":

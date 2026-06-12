@@ -730,6 +730,26 @@ setup_system_optimize() {
         || echo "dtoverlay=disable-bt" >> "${BOOT_FW}/config.txt"
     ok "Bluetooth radio disabled at boot  (dtoverlay=disable-bt)"
 
+    # Fast, bounded shutdown — no unit may hold a reboot longer than 20 s
+    # (systemd default is 90 s per unit; one hung service = very slow poweroff)
+    mkdir -p /etc/systemd/system.conf.d
+    cat > /etc/systemd/system.conf.d/plc-shutdown.conf << 'EOF'
+[Manager]
+DefaultTimeoutStopSec=20s
+EOF
+    ok "Shutdown timeout capped at 20 s per unit"
+
+    # Persistent journal (capped at 64 MB) — boot/shutdown logs survive
+    # reboots so hangs and crashes can actually be diagnosed afterwards
+    mkdir -p /etc/systemd/journald.conf.d /var/log/journal
+    cat > /etc/systemd/journald.conf.d/plc-journal.conf << 'EOF'
+[Journal]
+Storage=persistent
+SystemMaxUse=64M
+EOF
+    systemd-tmpfiles --create --prefix /var/log/journal 2>/dev/null || true
+    ok "Persistent journal enabled  (max 64 MB)"
+
     ok "System optimized — PLC stack, WiFi, SSH, Pi Connect untouched"
 }
 

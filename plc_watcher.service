@@ -11,6 +11,10 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/pi/plc_env/bin/python3 -u /home/pi/plc_checkweigher/plc_watcher.py
 Restart=always
 RestartSec=5
+# 10 s is enough for the reader to finalize a batch (PDF + state clear)
+# on SIGTERM; without this the systemd default of 90 s delays every
+# shutdown/reboot if anything blocks.
+TimeoutStopSec=10
 StandardOutput=journal
 StandardError=journal
 CPUSchedulingPolicy=fifo

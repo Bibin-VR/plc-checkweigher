@@ -97,8 +97,67 @@ def launch_reader_loop(plc):
         print("[watcher] Machine still ON after reader exit — relaunching plc_reader.py ...\n")
 
 
+def recover_interrupted_batch():
+    """
+    Power-failure recovery.  plc_reader saves data/batch_state.json after
+    every item; on a clean batch end the file is removed.  If it still
+    exists here, the previous run died mid-batch (power cut, crash, forced
+    reboot) — rebuild the PDF from the on-disk CSV and push it.
+    """
+    state_file = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "data", "batch_state.json")
+    try:
+        with open(state_file) as f:
+            state = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return
+    if not state.get("active"):
+        try:
+            os.remove(state_file)
+        except OSError:
+            pass
+        return
+
+    csv_path = state.get("csv_path", "")
+    print(f"[watcher] Unfinished batch detected (power loss / crash) — recovering")
+    print(f"[watcher]   CSV: {csv_path}")
+    try:
+        import csv as _csv
+        from datetime import datetime as _dt
+        from plc_report import build_pdf, PDF_DIR
+        from pdf_push import push_pdf_async
+
+        if not os.path.exists(csv_path):
+            print("[watcher]   CSV no longer exists — nothing to recover.")
+            os.remove(state_file)
+            return
+
+        with open(csv_path) as f:
+            rows = list(_csv.DictReader(f))
+        if not rows:
+            print("[watcher]   CSV empty — nothing to recover.")
+            os.remove(csv_path)
+            os.remove(state_file)
+            return
+
+        batch_data = state.get("batch_data", {})
+        ts   = _dt.now().strftime("%Y%m%d_%H%M%S")
+        name = f"report_batch{batch_data.get('batch_no', 0)}_{ts}_RECOVERED.pdf"
+        path = os.path.join(PDF_DIR, name)
+        stop_dt = rows[-1].get("datetime", "")
+        build_pdf(batch_data, rows, path,
+                  start_dt=state.get("start_dt", ""), stop_dt=stop_dt)
+        print(f"[watcher]   Recovered {len(rows)} item(s) → {name}")
+        push_pdf_async(path)
+        os.remove(csv_path)
+        os.remove(state_file)
+    except Exception as e:
+        print(f"[watcher]   Recovery failed: {e} — CSV kept for manual review.")
+
+
 def main():
     print("[watcher] PLC Start Watcher started.")
+    recover_interrupted_batch()
     plc = connect()
 
     try:
