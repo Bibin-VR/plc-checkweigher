@@ -1362,7 +1362,8 @@ PYEOF
     # 3. Boot cmdline parameters
     spin_start "Boot cmdline (quiet splash)"
     _CMD_MISSING=""
-    for _param in "quiet" "splash" "logo.nologo" "systemd.show_status=0"; do
+    for _param in "quiet" "splash" "logo.nologo" "systemd.show_status=0" \
+                  "plymouth.ignore-serial-consoles"; do
         grep -q "$_param" /boot/firmware/cmdline.txt 2>/dev/null \
             || _CMD_MISSING="${_CMD_MISSING} ${_param}"
     done

@@ -510,8 +510,11 @@ EOF
         sed -i 's/$/ logo.nologo/' /boot/firmware/cmdline.txt
     fi
     sed -i 's/loglevel=3/loglevel=1/' /boot/firmware/cmdline.txt 2>/dev/null || true
-    # Silence systemd service status lines + udev on the console
-    for _param in "systemd.show_status=0" "rd.systemd.show_status=0" "udev.log_level=3"; do
+    # Silence systemd service status lines + udev on the console.
+    # plymouth.ignore-serial-consoles is CRITICAL: with console=serial0 in
+    # cmdline, Plymouth falls back to text mode and no splash renders at all.
+    for _param in "systemd.show_status=0" "rd.systemd.show_status=0" \
+                  "udev.log_level=3" "plymouth.ignore-serial-consoles"; do
         grep -q "$_param" /boot/firmware/cmdline.txt \
             || sed -i "s/\$/ ${_param}/" /boot/firmware/cmdline.txt
     done
