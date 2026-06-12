@@ -3,233 +3,371 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Live Dashboard — Sai Samarth Engg Goa</title>
+  <title>OPS TERMINAL — SAI SAMARTH ENGINEERING</title>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: "Segoe UI", Arial, sans-serif;
-      background: #f0f4f8;
-      color: #222;
-      min-height: 100vh;
+    /* ════════════════════════════════════════════════════════════════════
+       TACTICAL TELEMETRY — CRT TERMINAL
+       Substrate #0A0A0A · Phosphor #EAEAEA · Hazard #FF2A2A · OK #4AF626
+       ════════════════════════════════════════════════════════════════════ */
+    :root {
+      --sub:    #0A0A0A;   /* deactivated CRT substrate   */
+      --panel:  #0E0E0E;   /* compartment fill            */
+      --line:   #2A2A2A;   /* hairline divider            */
+      --line-2: #3A3A3A;   /* emphasized divider          */
+      --fg:     #EAEAEA;   /* white phosphor              */
+      --dim:    #8A8A8A;   /* secondary phosphor          */
+      --faint:  #555555;   /* tertiary / metadata         */
+      --red:    #FF2A2A;   /* hazard / reject / offline   */
+      --grn:    #4AF626;   /* terminal green — ACCEPT only*/
+      --mono: "JetBrains Mono","IBM Plex Mono","Cascadia Mono","SF Mono",
+              Consolas,"Liberation Mono","Courier New",monospace;
+      --display: "Arial Black","Archivo Black","Helvetica Neue",Arial,sans-serif;
     }
 
-    /* ── header ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--mono);
+      background: var(--sub);
+      color: var(--fg);
+      min-height: 100vh;
+      font-size: 13px;
+      letter-spacing: .04em;
+    }
+
+    /* ── CRT scanlines — global, non-interactive ── */
+    body::after {
+      content: "";
+      position: fixed; inset: 0;
+      pointer-events: none;
+      z-index: 999;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent, transparent 2px,
+        rgba(0,0,0,.14) 2px, rgba(0,0,0,.14) 4px
+      );
+    }
+
+    /* ════════════════ HEADER ════════════════ */
     header {
-      background: #1B3A6B;
-      color: #fff;
-      padding: 14px 24px;
+      border-bottom: 2px solid var(--line-2);
+      padding: 14px 22px 12px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: 14px;
       flex-wrap: wrap;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      background: var(--sub);
     }
-    .hdr-left { display: flex; align-items: center; gap: 12px; }
-    header h1 { font-size: 1.15rem; font-weight: 700; }
-    header p  { font-size: 0.78rem; opacity: 0.75; margin-top: 2px; }
+    .hdr-left { display: flex; align-items: center; gap: 14px; }
 
+    header h1 {
+      font-family: var(--display);
+      font-weight: 900;
+      font-size: clamp(1.05rem, 2.6vw, 1.55rem);
+      letter-spacing: -0.02em;
+      line-height: .95;
+      text-transform: uppercase;
+    }
+    header p {
+      font-size: 10px;
+      color: var(--dim);
+      margin-top: 4px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    header p::before { content: "// "; color: var(--red); }
+
+    /* PLC link indicator — square, mechanical */
     .plc-dot {
-      width: 11px; height: 11px; border-radius: 50%;
-      background: #888; flex-shrink: 0;
-      box-shadow: 0 0 0 0 rgba(34,197,94,.6);
+      width: 12px; height: 12px;
+      background: var(--faint);
+      flex-shrink: 0;
+      outline: 1px solid var(--line-2);
+      outline-offset: 2px;
     }
-    .plc-dot.online {
-      background: #22c55e;
-      animation: pulse 2s ease-in-out infinite;
-    }
-    .plc-dot.offline { background: #f85149; animation: none; }
-    @keyframes pulse {
-      0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,.55); }
-      50%      { box-shadow: 0 0 0 6px rgba(34,197,94,0); }
-    }
+    .plc-dot.online  { background: var(--grn); animation: blink 2s steps(2) infinite; }
+    .plc-dot.offline { background: var(--red); animation: none; }
+    @keyframes blink { 50% { opacity: .45; } }
 
-    .hdr-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .hdr-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
     .status-badge {
-      padding: 4px 14px; border-radius: 20px;
-      font-size: 0.8rem; font-weight: 700;
-      text-transform: uppercase; letter-spacing: .5px;
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      padding: 5px 12px;
+      border: 1px solid var(--line-2);
       white-space: nowrap;
     }
-    .status-badge.running  { background: #22c55e; color: #fff; }
-    .status-badge.idle     { background: #e3b341; color: #1a1a1a; }
-    .status-badge.offline  { background: #888;    color: #fff; }
+    .status-badge::before { content: "[ "; color: var(--faint); }
+    .status-badge::after  { content: " ]"; color: var(--faint); }
+    .status-badge.running { color: var(--grn); border-color: var(--grn); }
+    .status-badge.idle    { color: var(--fg);  border-color: var(--line-2); }
+    .status-badge.offline { color: var(--red); border-color: var(--red); }
 
     .hdr-link {
-      background: rgba(255,255,255,.15);
-      color: #fff; text-decoration: none;
-      padding: 5px 14px; border-radius: 5px;
-      font-size: 0.8rem; white-space: nowrap;
+      color: var(--dim);
+      text-decoration: none;
+      font-size: 11px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      white-space: nowrap;
     }
-    .hdr-link:hover { background: rgba(255,255,255,.25); }
+    .hdr-link:hover { color: var(--fg); border-color: var(--fg); }
 
-    /* ── main layout ── */
-    main { max-width: 1100px; margin: 24px auto; padding: 0 16px 48px; }
+    /* ════════════════ MAIN ════════════════ */
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 20px 16px 56px;
+    }
 
-    /* ── cards ── */
+    /* compartment — square, bordered, zero radius */
     .card {
-      background: #fff;
-      border-radius: 10px;
-      box-shadow: 0 1px 4px rgba(0,0,0,.10);
-      padding: 20px 22px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 16px 18px 18px;
+      position: relative;
+    }
+    /* registration crosshair at compartment corner */
+    .card::before {
+      content: "+";
+      position: absolute;
+      top: -1px; right: 4px;
+      color: var(--faint);
+      font-size: 11px;
     }
     .card-title {
-      font-size: 0.7rem; font-weight: 700;
-      text-transform: uppercase; letter-spacing: 1px;
-      color: #2E6DA4; margin-bottom: 14px;
-      padding-bottom: 8px; border-bottom: 2px solid #d0dff0;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
     }
+    .card-title::before { content: "[ "; color: var(--red); }
+    .card-title::after  { content: " ]"; color: var(--red); }
 
-    /* ── top row ── */
     .top-row {
       display: grid;
-      grid-template-columns: 300px 1fr;
-      gap: 16px;
+      grid-template-columns: 340px 1fr;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    /* ── WEIGHT READOUT ── */
+    .weight-value {
+      font-family: var(--mono);
+      font-size: clamp(3rem, 7vw, 4.6rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      text-align: center;
+      margin: 14px 0 2px;
+      font-variant-numeric: tabular-nums;
+    }
+    .weight-value.accept { color: var(--grn); text-shadow: 0 0 18px rgba(74,246,38,.35); }
+    .weight-value.reject { color: var(--red); text-shadow: 0 0 18px rgba(255,42,42,.35); }
+    .weight-value.idle   { color: var(--fg); }
+    .weight-unit {
+      text-align: center;
+      font-size: 10px;
+      letter-spacing: .3em;
+      text-transform: uppercase;
+      color: var(--faint);
       margin-bottom: 16px;
     }
 
-    /* ── weight card ── */
-    .weight-value {
-      font-size: 3.2rem; font-weight: 700;
-      letter-spacing: -1px; line-height: 1;
-      text-align: center; margin: 8px 0 4px;
-      transition: color .2s;
-    }
-    .weight-value.accept { color: #16a34a; }
-    .weight-value.reject { color: #dc2626; }
-    .weight-value.idle   { color: #1B3A6B; }
-    .weight-unit {
-      text-align: center; font-size: 0.85rem;
-      color: #888; margin-bottom: 14px;
-    }
-
-    /* gauge bar */
-    .gauge-wrap { position: relative; height: 18px; margin: 10px 0 4px; }
+    /* tolerance scale — hard-edged bracket gauge */
+    .gauge-wrap { position: relative; height: 16px; margin: 10px 0 4px; }
     .gauge-bg {
       position: absolute; inset: 0;
-      background: #e5e7eb; border-radius: 9px;
+      background: var(--sub);
+      border: 1px solid var(--line-2);
     }
     .gauge-ok {
-      position: absolute; top: 0; bottom: 0;
-      background: rgba(34,197,94,.35); border-radius: 2px;
+      position: absolute; top: 1px; bottom: 1px;
+      background: rgba(74,246,38,.18);
+      border-left:  1px solid var(--grn);
+      border-right: 1px solid var(--grn);
     }
     .gauge-needle {
-      position: absolute; top: -3px; bottom: -3px;
-      width: 4px; background: #1B3A6B;
-      border-radius: 2px; transform: translateX(-50%);
+      position: absolute; top: -4px; bottom: -4px;
+      width: 3px;
+      background: var(--fg);
+      transform: translateX(-50%);
       transition: left .3s ease;
     }
-    .gauge-needle.accept { background: #16a34a; }
-    .gauge-needle.reject { background: #dc2626; }
+    .gauge-needle.accept { background: var(--grn); }
+    .gauge-needle.reject { background: var(--red); }
     .gauge-labels {
       display: flex; justify-content: space-between;
-      font-size: 0.68rem; color: #888; margin-top: 3px;
+      font-size: 10px; color: var(--faint); margin-top: 5px;
+      letter-spacing: .08em;
     }
     .target-line {
-      text-align: center; font-size: 0.75rem;
-      color: #6b7280; margin-top: 8px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--dim);
+      margin-top: 10px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
     }
+    .target-line strong { color: var(--fg); }
 
-    /* ── stats card ── */
+    /* ── STATS — 1px-gap compartment grid ── */
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
+      gap: 1px;
+      background: var(--line);
+      border: 1px solid var(--line);
       margin-bottom: 16px;
     }
     .stat-box {
       text-align: center;
-      padding: 12px 6px;
-      border-radius: 8px;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
+      padding: 14px 6px 12px;
+      background: var(--panel);
     }
     .stat-box .num {
-      font-size: 2rem; font-weight: 700;
-      line-height: 1; color: #1B3A6B;
+      font-size: 1.9rem;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--fg);
+      font-variant-numeric: tabular-nums;
     }
-    .stat-box .num.accept { color: #16a34a; }
-    .stat-box .num.reject { color: #dc2626; }
+    .stat-box .num.accept { color: var(--grn); }
+    .stat-box .num.reject { color: var(--red); }
     .stat-box .lbl {
-      font-size: 0.68rem; font-weight: 700;
-      text-transform: uppercase; letter-spacing: .8px;
-      color: #888; margin-top: 5px;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .22em;
+      text-transform: uppercase;
+      color: var(--faint);
+      margin-top: 7px;
     }
     .pass-rate-bar {
-      height: 6px; background: #e5e7eb;
-      border-radius: 3px; overflow: hidden; margin-top: 6px;
+      height: 4px;
+      background: var(--sub);
+      border: 1px solid var(--line);
+      overflow: hidden;
+      margin: 7px 8px 0;
     }
     .pass-rate-fill {
-      height: 100%; background: #22c55e;
-      border-radius: 3px; transition: width .4s ease;
+      height: 100%;
+      background: var(--grn);
+      transition: width .4s ease;
     }
 
-    /* ── batch info ── */
+    /* ── BATCH MANIFEST ── */
     .info-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-      gap: 10px;
+      gap: 1px;
+      background: var(--line);
+      border: 1px solid var(--line);
     }
+    .info-item { padding: 9px 12px; background: var(--panel); }
     .info-item .lbl {
-      font-size: 0.68rem; font-weight: 700;
-      text-transform: uppercase; letter-spacing: .8px;
-      color: #888;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: var(--faint);
     }
     .info-item .val {
-      font-size: 0.92rem; font-weight: 600;
-      color: #1B3A6B; margin-top: 2px;
-      white-space: nowrap; overflow: hidden;
-      text-overflow: ellipsis;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--fg);
+      margin-top: 4px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      letter-spacing: .02em;
     }
 
-    /* ── recent items ── */
+    /* ── ITEM FEED — dense telemetry table ── */
     .items-table {
-      width: 100%; border-collapse: collapse;
-      font-size: 0.82rem;
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
     }
     .items-table th {
-      text-align: left; padding: 6px 10px;
-      background: #f0f4f8; color: #2E6DA4;
-      font-size: 0.7rem; text-transform: uppercase;
-      letter-spacing: .8px; border-bottom: 2px solid #d0dff0;
+      text-align: left;
+      padding: 7px 10px;
+      color: var(--faint);
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .2em;
+      border-bottom: 1px solid var(--line-2);
+      background: var(--sub);
     }
     .items-table td {
       padding: 7px 10px;
-      border-bottom: 1px solid #f0f4f8;
+      border-bottom: 1px solid var(--line);
+      color: var(--dim);
     }
+    .items-table td strong { color: var(--fg); font-weight: 700; }
     .items-table tr:last-child td { border-bottom: none; }
-    .items-table tr.new-row td {
-      animation: row-flash .5s ease-out;
-    }
+    .items-table tr.new-row td { animation: row-flash .6s steps(3); }
     @keyframes row-flash {
-      from { background: #dbeafe; }
+      from { background: rgba(234,234,234,.12); }
       to   { background: transparent; }
     }
+
+    /* status flag — bracketed, no pill geometry */
     .pill {
-      display: inline-block; padding: 2px 9px;
-      border-radius: 10px; font-size: 0.72rem;
-      font-weight: 700; white-space: nowrap;
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      white-space: nowrap;
     }
-    .pill.accept { background: #dcfce7; color: #15803d; }
-    .pill.reject { background: #fee2e2; color: #b91c1c; }
+    .pill::before { content: "[ "; color: var(--faint); }
+    .pill::after  { content: " ]"; color: var(--faint); }
+    .pill.accept { color: var(--grn); }
+    .pill.reject { color: var(--red); }
 
     .empty-msg {
-      text-align: center; color: #aaa;
-      padding: 40px 0; font-size: 0.9rem;
+      text-align: center;
+      color: var(--faint);
+      padding: 42px 0;
+      font-size: 12px;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+    }
+    .empty-msg::before { content: ">>> "; color: var(--red); }
+
+    /* footer strip — unit metadata */
+    .sys-strip {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 0 16px 28px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-size: 9px;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--faint);
     }
 
-    /* ── layout helpers ── */
-    .row { display: grid; gap: 16px; margin-bottom: 16px; }
-
     /* ── responsive ── */
-    @media (max-width: 700px) {
+    @media (max-width: 760px) {
       .top-row { grid-template-columns: 1fr; }
       .stats-grid { grid-template-columns: repeat(2, 1fr); }
-      .weight-value { font-size: 2.6rem; }
+      .weight-value { font-size: 3rem; }
       header { padding: 10px 14px; }
     }
     @media (max-width: 420px) {
-      .stats-grid { grid-template-columns: repeat(2, 1fr); }
       .info-grid { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
@@ -240,13 +378,13 @@
   <div class="hdr-left">
     <span class="plc-dot" id="plc-dot"></span>
     <div>
-      <h1>Sai Samarth Engg Goa</h1>
-      <p id="machine-name">Check-Weigher System</p>
+      <h1>Sai Samarth Engineering</h1>
+      <p id="machine-name">Check-Weigher Telemetry</p>
     </div>
   </div>
   <div class="hdr-right">
     <span class="status-badge offline" id="status-badge">OFFLINE</span>
-    <a class="hdr-link" href="/">&#128196; Reports</a>
+    <a class="hdr-link" href="/">Reports &gt;&gt;&gt;</a>
   </div>
 </header>
 
@@ -255,7 +393,7 @@
   <!-- top row: weight + stats -->
   <div class="top-row">
 
-    <!-- weight card -->
+    <!-- weight readout -->
     <div class="card">
       <div class="card-title">Live Weight</div>
       <div class="weight-value idle" id="weight-val">—</div>
@@ -273,7 +411,7 @@
       <div class="target-line">Target: <strong id="target-val">—</strong> g</div>
     </div>
 
-    <!-- stats card -->
+    <!-- stats compartment -->
     <div class="card">
       <div class="card-title">Batch Statistics</div>
       <div class="stats-grid">
@@ -296,8 +434,8 @@
         </div>
       </div>
 
-      <!-- batch info -->
-      <div class="card-title" style="margin-top:14px">Batch Info</div>
+      <!-- batch manifest -->
+      <div class="card-title" style="margin-top:14px">Batch Manifest</div>
       <div class="info-grid">
         <div class="info-item"><div class="lbl">Product</div><div class="val" id="i-product">—</div></div>
         <div class="info-item"><div class="lbl">Batch No</div><div class="val" id="i-batch">—</div></div>
@@ -309,17 +447,17 @@
     </div>
   </div>
 
-  <!-- recent items -->
+  <!-- item feed -->
   <div class="card">
-    <div class="card-title">Recent Items</div>
+    <div class="card-title">Item Feed</div>
     <div id="items-wrap">
-      <div class="empty-msg" id="empty-msg">Waiting for items…</div>
+      <div class="empty-msg" id="empty-msg">Awaiting items</div>
       <table class="items-table" id="items-table" style="display:none">
         <thead>
           <tr>
             <th>#</th>
             <th>Time</th>
-            <th>Read Weight</th>
+            <th>Read Wt</th>
             <th>Target</th>
             <th>Status</th>
             <th>Barcode</th>
@@ -332,6 +470,12 @@
   </div>
 
 </main>
+
+<div class="sys-strip">
+  <span>UNIT / CW-2400</span>
+  <span>SLMP-3E // 192.168.3.250:1025</span>
+  <span>SAI SAMARTH ENGINEERING &copy; GOA</span>
+</div>
 
 <script>
   const MAX_ROWS = 30;
@@ -412,7 +556,7 @@
     const running   = s.running;
     const status    = (s.status || 'OFFLINE').toUpperCase();
 
-    /* PLC dot */
+    /* PLC link indicator */
     elDot.className = 'plc-dot ' + (connected ? 'online' : 'offline');
 
     /* status badge */
@@ -447,7 +591,7 @@
     elRate.textContent   = total > 0 ? rate.toFixed(1) + '%' : '—';
     elRateBar.style.width = rate + '%';
 
-    /* batch info */
+    /* batch manifest */
     const machine = s.machine || 'CW-2400';
     elMachine.textContent  = machine;
     elProduct.textContent  = s.product_name  || '—';

@@ -3,214 +3,296 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Check-Weigher Reports — Sai Samarth Engg Goa</title>
+  <title>REPORT ARCHIVE — SAI SAMARTH ENGINEERING</title>
   <style>
+    /* ════════════════════════════════════════════════════════════════════
+       TACTICAL TELEMETRY — REPORT ARCHIVE / DOSSIER INDEX
+       Substrate #0A0A0A · Phosphor #EAEAEA · Hazard #FF2A2A
+       ════════════════════════════════════════════════════════════════════ */
+    :root {
+      --sub:    #0A0A0A;
+      --panel:  #0E0E0E;
+      --line:   #2A2A2A;
+      --line-2: #3A3A3A;
+      --fg:     #EAEAEA;
+      --dim:    #8A8A8A;
+      --faint:  #555555;
+      --red:    #FF2A2A;
+      --grn:    #4AF626;
+      --mono: "JetBrains Mono","IBM Plex Mono","Cascadia Mono","SF Mono",
+              Consolas,"Liberation Mono","Courier New",monospace;
+      --display: "Arial Black","Archivo Black","Helvetica Neue",Arial,sans-serif;
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: "Segoe UI", Arial, sans-serif;
-      background: #f0f4f8;
-      color: #222;
+      font-family: var(--mono);
+      background: var(--sub);
+      color: var(--fg);
       min-height: 100vh;
+      font-size: 13px;
+      letter-spacing: .04em;
     }
 
+    body::after {
+      content: "";
+      position: fixed; inset: 0;
+      pointer-events: none;
+      z-index: 999;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent, transparent 2px,
+        rgba(0,0,0,.14) 2px, rgba(0,0,0,.14) 4px
+      );
+    }
+
+    /* ════════════════ HEADER ════════════════ */
     header {
-      background: #1B3A6B;
-      color: #fff;
-      padding: 18px 32px;
+      border-bottom: 2px solid var(--line-2);
+      padding: 16px 22px 14px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      gap: 14px;
+      flex-wrap: wrap;
     }
-    header h1 { font-size: 1.3rem; font-weight: 700; letter-spacing: 0.3px; }
-    header p  { font-size: 0.82rem; opacity: 0.8; margin-top: 2px; }
+    header h1 {
+      font-family: var(--display);
+      font-weight: 900;
+      font-size: clamp(1.05rem, 2.6vw, 1.55rem);
+      letter-spacing: -0.02em;
+      line-height: .95;
+      text-transform: uppercase;
+    }
+    header p {
+      font-size: 10px;
+      color: var(--dim);
+      margin-top: 4px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    header p::before { content: "// "; color: var(--red); }
+
     .badge {
-      background: #2E6DA4;
-      color: #fff;
-      border-radius: 20px;
-      padding: 4px 14px;
-      font-size: 0.85rem;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      padding: 5px 12px;
+      border: 1px solid var(--line-2);
+      white-space: nowrap;
+      color: var(--fg);
+    }
+    .hdr-live-link {
+      color: var(--dim);
+      text-decoration: none;
+      font-size: 11px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
       white-space: nowrap;
     }
+    .hdr-live-link:hover { color: var(--fg); border-color: var(--fg); }
 
-    main { max-width: 960px; margin: 32px auto; padding: 0 16px 48px; }
+    /* link status — square indicator, terminal green = SSE link up */
+    .live-dot {
+      width: 10px; height: 10px;
+      background: var(--grn);
+      display: inline-block; flex-shrink: 0;
+      outline: 1px solid var(--line-2);
+      outline-offset: 2px;
+      animation: blink 2s steps(2) infinite;
+    }
+    .live-dot.off { background: var(--faint); animation: none; }
+    @keyframes blink { 50% { opacity: .45; } }
+    .live-label {
+      font-size: 9px;
+      color: var(--faint);
+      letter-spacing: .2em;
+      text-transform: uppercase;
+    }
+
+    /* ════════════════ MAIN ════════════════ */
+    main { max-width: 1020px; margin: 0 auto; padding: 24px 16px 56px; }
 
     .empty {
       text-align: center;
-      padding: 80px 0;
-      color: #888;
-      font-size: 1.1rem;
+      padding: 90px 0;
+      color: var(--faint);
+      font-size: 12px;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      line-height: 2.2;
     }
+    .empty::before { content: ">>> "; color: var(--red); }
 
-    .day-group { margin-bottom: 32px; }
+    .day-group { margin-bottom: 34px; }
 
     .day-label {
-      font-size: 0.78rem;
+      font-size: 10px;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 1px;
-      color: #2E6DA4;
-      margin-bottom: 10px;
-      padding-bottom: 6px;
-      border-bottom: 2px solid #d0dff0;
+      letter-spacing: .22em;
+      color: var(--dim);
+      margin-bottom: 12px;
+      padding-bottom: 7px;
+      border-bottom: 1px solid var(--line-2);
     }
+    .day-label::before { content: "// "; color: var(--red); }
 
     .card-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: 14px;
+      grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+      gap: 1px;
+      background: var(--line);
+      border: 1px solid var(--line);
     }
 
+    /* dossier entry — square compartment */
     .card {
-      background: #fff;
-      border-radius: 10px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.10);
-      padding: 18px 20px;
+      background: var(--panel);
+      padding: 16px 18px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      transition: box-shadow 0.15s;
+      gap: 12px;
     }
-    .card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.15); }
+    .card:hover { background: #131313; }
 
-    .card-top {
-      display: flex;
-      align-items: flex-start;
-      gap: 14px;
-    }
+    .card-top { display: flex; align-items: flex-start; gap: 13px; }
+
     .pdf-icon {
-      width: 40px; height: 40px; flex-shrink: 0;
-      background: #e8f0fb;
-      border-radius: 8px;
+      width: 38px; height: 38px; flex-shrink: 0;
+      border: 1px solid var(--line-2);
       display: flex; align-items: center; justify-content: center;
     }
-    .pdf-icon svg { width: 22px; height: 22px; fill: #2E6DA4; }
+    .pdf-icon svg { width: 20px; height: 20px; fill: var(--dim); }
 
     .card-info { flex: 1; min-width: 0; }
     .card-info .batch {
-      font-size: 1rem; font-weight: 700; color: #1B3A6B;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--fg);
+      letter-spacing: .06em;
+      text-transform: uppercase;
     }
     .card-info .meta {
-      font-size: 0.78rem; color: #666; margin-top: 3px;
+      font-size: 11px;
+      color: var(--dim);
+      margin-top: 4px;
+      letter-spacing: .04em;
     }
     .card-info .fname {
-      font-size: 0.7rem; color: #aaa; margin-top: 2px;
+      font-size: 9px;
+      color: var(--faint);
+      margin-top: 3px;
+      letter-spacing: .02em;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
 
-    .card-actions {
-      display: flex;
-      gap: 8px;
-    }
+    .card-actions { display: flex; gap: 1px; background: var(--line); border: 1px solid var(--line); }
     .btn {
       flex: 1;
-      display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-      padding: 7px 0;
-      border-radius: 6px;
-      font-size: 0.8rem;
-      font-weight: 600;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 8px 0;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .18em;
+      text-transform: uppercase;
       text-decoration: none;
       cursor: pointer;
       border: none;
-      transition: opacity 0.15s;
     }
-    .btn:hover { opacity: 0.85; }
-    .btn-view     { background: #2E6DA4; color: #fff; }
-    .btn-download { background: #e8f0fb; color: #1B3A6B; }
+    .btn svg { width: 12px; height: 12px; fill: currentColor; }
+    .btn-view     { background: var(--fg);   color: var(--sub); }
+    .btn-view:hover { background: var(--red); color: var(--fg); }
+    .btn-download { background: var(--panel); color: var(--dim); }
+    .btn-download:hover { color: var(--fg); }
 
-    .btn svg { width: 13px; height: 13px; fill: currentColor; }
-
-    /* PDF viewer overlay */
+    /* ════════════════ PDF VIEWER — terminal window ════════════════ */
     #overlay {
       display: none;
       position: fixed; inset: 0;
-      background: rgba(0,0,0,0.6);
+      background: rgba(0,0,0,0.82);
       z-index: 100;
       align-items: center;
       justify-content: center;
     }
     #overlay.active { display: flex; }
     #viewer-box {
-      background: #fff;
-      border-radius: 12px;
-      width: 95vw; max-width: 860px;
+      background: var(--sub);
+      border: 1px solid var(--line-2);
+      width: 95vw; max-width: 880px;
       height: 92vh;
       display: flex; flex-direction: column;
       overflow: hidden;
-      box-shadow: 0 8px 40px rgba(0,0,0,0.4);
     }
     #viewer-toolbar {
       display: flex; align-items: center; justify-content: space-between;
       padding: 10px 14px;
-      background: #1B3A6B;
-      color: #fff;
+      border-bottom: 1px solid var(--line-2);
       flex-shrink: 0;
       gap: 8px;
     }
     #viewer-title {
-      font-size: 0.82rem; font-weight: 600;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
       flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    #viewer-page-info { font-size: 0.78rem; opacity: 0.8; white-space: nowrap; }
+    #viewer-title::before { content: "[ DOC ] "; color: var(--red); }
+    #viewer-page-info { font-size: 10px; color: var(--faint); white-space: nowrap; letter-spacing: .12em; }
     #viewer-close {
-      background: none; border: none; color: #fff;
-      font-size: 1.3rem; cursor: pointer; line-height: 1;
-      padding: 2px 8px; border-radius: 4px; flex-shrink: 0;
+      background: none;
+      border: 1px solid var(--line-2);
+      color: var(--fg);
+      font-family: var(--mono);
+      font-size: 13px; cursor: pointer; line-height: 1;
+      padding: 4px 10px; flex-shrink: 0;
     }
-    #viewer-close:hover { background: rgba(255,255,255,0.15); }
+    #viewer-close:hover { border-color: var(--red); color: var(--red); }
     #viewer-scroll {
       flex: 1;
       overflow-y: auto;
-      background: #525659;
+      background: #161616;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 12px 8px;
+      padding: 14px 8px;
       gap: 10px;
     }
     #viewer-scroll canvas {
       max-width: 100%;
       height: auto;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      outline: 1px solid var(--line-2);
       display: block;
     }
     #viewer-loading {
-      color: #ccc; font-size: 0.9rem; margin: auto;
+      color: var(--faint); font-size: 11px; margin: auto;
+      letter-spacing: .2em; text-transform: uppercase;
     }
 
-    /* ── live-update indicator ── */
-    .live-dot {
-      width: 9px; height: 9px; border-radius: 50%;
-      background: #22c55e;
-      display: inline-block; flex-shrink: 0;
-      box-shadow: 0 0 0 0 rgba(34,197,94,.6);
-      animation: live-pulse 2s ease-in-out infinite;
-    }
-    .live-dot.off { background: #888; animation: none; box-shadow: none; }
-    @keyframes live-pulse {
-      0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,.6); }
-      50%      { box-shadow: 0 0 0 5px rgba(34,197,94,0); }
-    }
-    .live-label { font-size: 0.75rem; opacity: 0.7; }
-
-    /* ── new-card highlight ── */
+    /* ── new dossier highlight — hazard red ── */
     .card-new {
-      outline: 2px solid #22c55e;
-      outline-offset: -2px;
-      animation: card-pop 0.4s ease-out;
+      outline: 1px solid var(--red);
+      outline-offset: -1px;
+      animation: card-pop .3s steps(3);
     }
     @keyframes card-pop {
-      from { transform: scale(0.96); opacity: 0; }
-      to   { transform: scale(1);    opacity: 1; }
+      from { opacity: 0; }
+      to   { opacity: 1; }
     }
     .new-badge {
-      background: #22c55e; color: #fff;
-      font-size: 0.62rem; font-weight: 700;
-      padding: 2px 6px; border-radius: 8px;
-      letter-spacing: 0.5px; text-transform: uppercase;
+      color: var(--red);
+      font-size: 9px; font-weight: 700;
+      letter-spacing: .14em; text-transform: uppercase;
       vertical-align: middle;
     }
+    .new-badge::before { content: "[ "; }
+    .new-badge::after  { content: " ]"; }
 
     /* ── toast ── */
     #toast-container {
@@ -219,16 +301,34 @@
       z-index: 200; pointer-events: none;
     }
     .toast {
-      background: #1B3A6B; color: #fff;
-      padding: 10px 16px; border-radius: 8px;
-      font-size: 0.85rem;
-      box-shadow: 0 4px 14px rgba(0,0,0,0.35);
-      border-left: 4px solid #22c55e;
-      animation: toast-in .3s ease;
+      background: var(--sub);
+      color: var(--fg);
+      padding: 11px 16px;
+      font-size: 11px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      border: 1px solid var(--line-2);
+      border-left: 3px solid var(--red);
+      animation: toast-in .25s steps(3);
     }
     @keyframes toast-in {
-      from { transform: translateX(16px); opacity: 0; }
+      from { transform: translateX(14px); opacity: 0; }
       to   { transform: translateX(0);    opacity: 1; }
+    }
+
+    /* footer strip */
+    .sys-strip {
+      max-width: 1020px;
+      margin: 0 auto;
+      padding: 0 16px 28px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-size: 9px;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--faint);
     }
   </style>
 </head>
@@ -236,17 +336,14 @@
 
 <header>
   <div>
-    <h1>Sai Samarth Engg Goa</h1>
-    <p>Check-Weigher Production Reports</p>
+    <h1>Sai Samarth Engineering</h1>
+    <p>Production Report Archive</p>
   </div>
-  <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
-    <a href="/live" style="background:rgba(255,255,255,.15);color:#fff;text-decoration:none;
-       padding:4px 13px;border-radius:5px;font-size:0.8rem;white-space:nowrap;">
-      &#9654; Live
-    </a>
-    <div style="display:flex;align-items:center;gap:6px;">
+  <div style="display:flex;align-items:center;gap:14px;flex-shrink:0;flex-wrap:wrap;">
+    <a href="/live" class="hdr-live-link">Live &gt;&gt;&gt;</a>
+    <div style="display:flex;align-items:center;gap:8px;">
       <span class="live-dot off" id="live-dot"></span>
-      <span class="live-label">Auto</span>
+      <span class="live-label">Link</span>
     </div>
     <span class="badge" id="total-badge">{{ total }} report{{ 's' if total != 1 else '' }}</span>
   </div>
@@ -254,7 +351,7 @@
 
 <main>
   {% if not groups %}
-  <div class="empty">No reports found yet.<br>Reports appear here after each production batch.</div>
+  <div class="empty">No reports on file<br>Entries appear after each production batch</div>
   {% else %}
     {% for date, reports in groups.items() %}
     <div class="day-group" data-date="{{ date }}">
@@ -268,7 +365,7 @@
             </div>
             <div class="card-info">
               <div class="batch">Batch {{ r.batch }}</div>
-              <div class="meta">{{ r.time_str }} &nbsp;·&nbsp; {{ r.size_kb }} KB</div>
+              <div class="meta">{{ r.time_str }} &nbsp;//&nbsp; {{ r.size_kb }} KB</div>
               <div class="fname" title="{{ r.filename }}">{{ r.filename }}</div>
             </div>
           </div>
@@ -289,6 +386,12 @@
     {% endfor %}
   {% endif %}
 </main>
+
+<div class="sys-strip">
+  <span>ARCHIVE / PDF</span>
+  <span>SMB PUSH // STORE &amp; FORWARD</span>
+  <span>SAI SAMARTH ENGINEERING &copy; GOA</span>
+</div>
 
 <!-- PDF viewer overlay -->
 <div id="overlay" onclick="if(event.target===this)closeViewer()">
@@ -393,7 +496,7 @@
         '</div>' +
         '<div class="card-info">' +
           '<div class="batch">Batch ' + escHtml(r.batch) + ' <span class="new-badge">new</span></div>' +
-          '<div class="meta">' + escHtml(r.time_str) + ' &nbsp;·&nbsp; ' + escHtml(String(r.size_kb)) + ' KB</div>' +
+          '<div class="meta">' + escHtml(r.time_str) + ' &nbsp;//&nbsp; ' + escHtml(String(r.size_kb)) + ' KB</div>' +
           '<div class="fname" title="' + fnH + '">' + fnH + '</div>' +
         '</div>' +
       '</div>' +
