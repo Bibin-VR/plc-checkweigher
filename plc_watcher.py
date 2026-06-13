@@ -71,6 +71,13 @@ def run_reader(plc):
     proc = subprocess.Popen([sys.executable, _READER])
     proc.wait()
     print(f"\n[watcher] plc_reader.py exited (code {proc.returncode})")
+    # Immediately drain any PDFs that plc_reader queued (SMB host was down during batch)
+    # without waiting for the next backoff tick (up to 5 min).
+    try:
+        import pdf_push
+        pdf_push._signal.set()
+    except Exception:
+        pass
     print("[watcher] Reconnecting — waiting for next START ...\n")
     return connect()
 

@@ -316,6 +316,19 @@ def push_pdf_async(path: str):
     threading.Thread(target=_push_all, args=(path,), daemon=True).start()
 
 
+def push_pdf_sync(path: str):
+    """
+    Synchronous push — blocks until the attempt completes.
+    Use this from plc_reader at batch end so the push is not racing the
+    process exit (daemon threads are killed when the process exits).
+    On failure the file is queued to delivery_queue.json; the long-running
+    watcher process drains it via its own RetryWorker.
+    """
+    if not any([EMAIL_ENABLED, SMB_ENABLED, HTTP_ENABLED]):
+        return
+    _push_all(path)
+
+
 def _push_all(path: str):
     filename = os.path.basename(path)
 

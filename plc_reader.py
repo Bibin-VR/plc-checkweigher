@@ -19,7 +19,7 @@ import time
 from datetime import datetime
 from pymcprotocol import Type3E
 from plc_report import build_pdf, PDF_DIR
-from pdf_push import push_pdf_async
+from pdf_push import push_pdf_sync
 
 PLC_IP            = "192.168.3.250"
 PLC_PORT          = 1025
@@ -242,7 +242,7 @@ def gen_batch_pdf(batch_data: dict, event_rows: list,
     try:
         build_pdf(batch_data, event_rows, path, start_dt=start_dt, stop_dt=stop_dt)
         print(f"  [PDF] {len(event_rows)} items → {path}")
-        push_pdf_async(path)   # send to remote PC (no-op if PUSH_ENABLED=False)
+        push_pdf_sync(path)    # blocks until done — safe at batch end, avoids race with process exit
         return True
     except Exception as e:
         print(f"  [PDF] ERROR: {e}")
