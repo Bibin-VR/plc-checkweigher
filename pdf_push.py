@@ -87,6 +87,11 @@ _LEDGER_FILE = os.path.join(_DIR, "delivery_sent.log")
 # ── Retry backoff schedule (seconds) — last value repeats indefinitely ────────
 _BACKOFF = [30, 60, 120, 300]
 
+# When the queue is clear, the worker still re-scans the reports directory on
+# this interval and re-queues anything that isn't confirmed-delivered. This is
+# the self-healing sweep that makes delivery as durable as the PDF file itself.
+_IDLE_SWEEP = 120
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Ledger  (append-only flat file — one filename per line)
@@ -182,6 +187,59 @@ def _queue_snapshot() -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Reconciliation — the durable safety net.
+#
+# The PDF file in the reports directory IS the record that a report exists and
+# must be delivered. This sweep compares every PDF on disk against the sent
+# ledger and re-queues anything not yet confirmed delivered. It guarantees a
+# report is NEVER lost, even when:
+#   • the process died between PDF generation and the push attempt
+#   • the delivery_queue.json was corrupted, truncated, or deleted
+#   • a push lost a race with process exit (the pre-sync-fix bug)
+#   • the Pi lost power mid-delivery
+# Delivery is thus exactly as durable as report generation itself.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _report_dir() -> str:
+    try:
+        from plc_report import PDF_DIR
+        return PDF_DIR
+    except Exception:
+        return os.path.join(_BASE_DIR, "..", "reports")
+
+def _list_report_pdfs() -> list:
+    d = _report_dir()
+    try:
+        return [os.path.join(d, f) for f in os.listdir(d)
+                if f.lower().endswith(".pdf")]
+    except OSError:
+        return []
+
+def reconcile_reports() -> int:
+    """
+    Queue every on-disk report PDF that is not in the sent ledger and not
+    already queued. Returns the number of files newly queued.
+    Safe to call repeatedly — fully idempotent (dedups by ledger + queue).
+    """
+    if not SMB_ENABLED:
+        return 0
+    global _sent
+    with _lock:
+        _sent        = _load_ledger()
+        queued_paths = {i["path"] for i in _read_queue()}
+        ledger       = set(_sent)
+    newly = 0
+    for path in _list_report_pdfs():
+        if os.path.basename(path) in ledger or path in queued_paths:
+            continue
+        _enqueue(path)
+        newly += 1
+    if newly:
+        print(f"  [SMB] reconcile: {newly} undelivered report(s) re-queued")
+    return newly
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SMB — single attempt
 # Returns: True  = delivered
 #          False = failed, keep in queue
@@ -236,10 +294,14 @@ class _RetryWorker(threading.Thread):
     def __init__(self):
         super().__init__(daemon=True, name="pdf-smb-retry")
         self._backoff_step = 0
+        self._idle         = True   # True → queue clear, use long idle sweep
 
     def run(self):
         while True:
-            delay = _BACKOFF[min(self._backoff_step, len(_BACKOFF) - 1)]
+            # While failing, retry on the backoff schedule. While clear, still
+            # wake on the idle-sweep interval to reconcile the reports dir.
+            delay = (_IDLE_SWEEP if self._idle
+                     else _BACKOFF[min(self._backoff_step, len(_BACKOFF) - 1)])
             _signal.wait(timeout=delay)
             _signal.clear()
             self._drain()
@@ -252,10 +314,15 @@ class _RetryWorker(threading.Thread):
         with _lock:
             _sent = _load_ledger()
 
+        # Self-healing: pull in any on-disk report not yet sent/queued.
+        reconcile_reports()
+
         items = _queue_snapshot()
         if not items:
             self._backoff_step = 0
+            self._idle         = True
             return
+        self._idle = False
 
         delivered = 0
         failed    = 0
@@ -288,9 +355,11 @@ class _RetryWorker(threading.Thread):
 
         if failed == 0:
             self._backoff_step = 0      # all clear — reset backoff
+            self._idle         = True
             if delivered:
                 print(f"  [SMB] queue drained — {delivered} file(s) delivered")
         else:
+            self._idle         = False
             self._backoff_step = min(self._backoff_step + 1, len(_BACKOFF) - 1)
             next_delay = _BACKOFF[min(self._backoff_step, len(_BACKOFF) - 1)]
             print(f"  [SMB] {remaining} file(s) still pending — "
@@ -410,6 +479,9 @@ def _push_http(path: str):
 def _startup_recovery():
     if not SMB_ENABLED:
         return
+    # Reconcile first: re-queue any PDF on disk that was generated but never
+    # confirmed delivered (crash/power-loss between generation and push).
+    reconcile_reports()
     pending = _queue_snapshot()
     if pending:
         names = [i["filename"] for i in pending]
