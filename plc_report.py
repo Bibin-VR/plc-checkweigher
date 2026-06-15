@@ -279,11 +279,17 @@ def build_pdf(batch: dict, rows: list, path: str,
     story.append(Spacer(1, 5 * mm))
 
     # ── Item data table ───────────────────────────────────────────────────────
-    # Columns: Date&Time | Pallet | Lot No | Prod.Wt | Read.Wt | Status | Remark | Barcode | Scanner
-    COL_W = [mm * w for w in [28, 16, 16, 18, 18, 24, 16, 28, 16]]
+    # Columns: Sl.No. | Pallet | Lot No | Prod.Wt | Read.Wt | Status | Remark | Barcode | Date&Time
+    # (Sl.No. is the per-pallet running serial; Date & Time moved to the last column.)
+    COL_W = [mm * w for w in [16, 16, 16, 18, 18, 24, 16, 28, 28]]
+
+    # Highlight colours for rejected read weights
+    C_YELLOW = colors.HexColor("#FFD400")   # UNDER WEIGHT (low)
+    C_RED    = colors.HexColor("#FF3B3B")   # OVER WEIGHT (over)
+    READ_WT_COL = 4                          # 0-based index of the Read.Wt column
 
     tbl_data = [[
-        Paragraph("Date &amp;Time",S_THDR),
+        Paragraph("Sl. No.",      S_THDR),
         Paragraph("Pallet",       S_THDR),
         Paragraph("Lot no.",      S_THDR),
         Paragraph("Prod.\nWeight",S_THDR),
@@ -291,18 +297,24 @@ def build_pdf(batch: dict, rows: list, path: str,
         Paragraph("Status",       S_THDR),
         Paragraph("Remark",       S_THDR),
         Paragraph("Barcode",      S_THDR),
-        Paragraph("Scanner",      S_THDR),
+        Paragraph("Date &amp;Time",S_THDR),
     ]]
 
-    scanner = batch.get("weighing_scale", "")
+    hl_styles = []   # per-row read-weight highlight commands
 
-    for r in rows:
+    for idx, r in enumerate(rows, start=1):   # idx = table row (row 0 is header)
         # Split datetime into date / time lines
         dt = str(r.get("datetime", ""))
         parts = dt.strip().split() if dt.strip() else ["", ""]
         date_part = parts[0] if len(parts) > 0 else ""
         time_part = parts[-1] if len(parts) > 1 else ""
         dt_cell = Paragraph(f"{date_part}<br/>{time_part}", S_TVAL)
+
+        serial = r.get("serial", "")
+        try:
+            serial = f"{int(serial):04d}"
+        except (ValueError, TypeError):
+            serial = str(serial)
 
         pallet = str(r.get("pallet_no", ""))
         try:
@@ -319,8 +331,19 @@ def build_pdf(batch: dict, rows: list, path: str,
         status  = str(r.get("status", ""))
         remark  = _remark(status)
 
+        # Highlight the read weight cell for rejected items
+        su = status.upper()
+        if "UNDER" in su:
+            hl_styles.append(("BACKGROUND",
+                              (READ_WT_COL, idx), (READ_WT_COL, idx), C_YELLOW))
+        elif "OVER" in su:
+            hl_styles.append(("BACKGROUND",
+                              (READ_WT_COL, idx), (READ_WT_COL, idx), C_RED))
+            hl_styles.append(("TEXTCOLOR",
+                              (READ_WT_COL, idx), (READ_WT_COL, idx), colors.white))
+
         tbl_data.append([
-            dt_cell,
+            Paragraph(serial,                          S_TVAL),
             Paragraph(pallet,                          S_TVAL),
             Paragraph(lot,                             S_TVAL),
             Paragraph(str(r.get("product_weight", "")),S_TVAL),
@@ -328,7 +351,7 @@ def build_pdf(batch: dict, rows: list, path: str,
             Paragraph(status,                          S_TVAL),
             Paragraph(remark,                          S_TVAL),
             Paragraph(str(r.get("barcode", "")),       S_TVAL_L),
-            Paragraph(scanner,                         S_TVAL),
+            dt_cell,
         ])
 
     tbl = Table(tbl_data, colWidths=COL_W, repeatRows=1)
@@ -340,6 +363,7 @@ def build_pdf(batch: dict, rows: list, path: str,
         ("TOPPADDING",    (0, 0), (-1, -1), 2),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
         ("FONTNAME",      (0, 0), (-1,  0), "Helvetica-Bold"),
+        *hl_styles,
     ]))
     story.append(tbl)
     story.append(Spacer(1, 6 * mm))
@@ -393,6 +417,7 @@ def main():
     os.makedirs(PDF_DIR, exist_ok=True)
 
     rows = [{
+        "serial"         : 1,
         "item_no"        : 1,
         "pallet_no"      : data["pallet_no"],
         "lot_no"         : data["lot_no"],

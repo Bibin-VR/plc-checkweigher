@@ -49,6 +49,38 @@ def _write_kiosk(data: dict):
 _BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 BATCH_STATE = os.path.join(_BASE_DIR, "data", "batch_state.json")
 
+# ── Per-pallet running serial number ─────────────────────────────────────────
+# A serial that starts at 1 and counts up for every item in a pallet. It
+# CONTINUES across PDF reports / reader restarts as long as the pallet number
+# is unchanged (e.g. the machine is stopped mid-pallet and restarted), and
+# RESETS to 1 the moment the pallet number changes. Persisted to disk so it
+# survives the reader process exiting at every batch end.
+SERIAL_STATE = os.path.join(_BASE_DIR, "data", "serial_state.json")
+
+
+def _next_serial(pallet_no: int) -> int:
+    """Return the next serial for this pallet; reset to 1 on pallet change."""
+    try:
+        with open(SERIAL_STATE) as f:
+            st = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        st = {}
+    if st.get("pallet_no") == pallet_no:
+        serial = int(st.get("serial", 0)) + 1
+    else:
+        serial = 1
+    try:
+        os.makedirs(os.path.dirname(SERIAL_STATE), exist_ok=True)
+        tmp = SERIAL_STATE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"pallet_no": pallet_no, "serial": serial}, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, SERIAL_STATE)
+    except Exception as e:
+        print(f"  [serial] save failed: {e}")
+    return serial
+
 
 def _save_batch_state(state: dict):
     try:
@@ -266,7 +298,7 @@ def main():
         path = os.path.join(PDF_DIR, f"session_{ts}.csv")
         f    = open(path, "w", newline="")
         w    = csv.writer(f)
-        w.writerow(["item_no", "pallet_no", "lot_no", "datetime",
+        w.writerow(["serial", "item_no", "pallet_no", "lot_no", "datetime",
                     "product_weight", "read_weight", "status", "barcode"])
         print(f"CSV log     : {path}")
         return path, f, w
@@ -495,7 +527,12 @@ def main():
                 if not batch_start_dt:
                     batch_start_dt = data.get("datetime", _now_str())
 
+                # Per-pallet running serial (continues across PDFs/restarts
+                # within a pallet, resets to 1 when the pallet changes).
+                serial_no = _next_serial(snap_pallet)
+
                 row = {
+                    "serial"         : serial_no,
                     "item_no"        : item_count,
                     "pallet_no"      : snap_pallet,
                     "lot_no"         : data.get("lot_no", ""),
@@ -508,7 +545,7 @@ def main():
                 event_rows.append(row)
 
                 csv_writer.writerow([
-                    row["item_no"], row["pallet_no"], row["lot_no"],
+                    row["serial"], row["item_no"], row["pallet_no"], row["lot_no"],
                     row["datetime"], row["product_weight"],
                     row["read_weight"], row["status"], row["barcode"],
                 ])
