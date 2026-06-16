@@ -336,7 +336,9 @@ def check_plc_state():
         batch_no  = state.get("batch_no",      0)
         product   = state.get("product_name",  "")
 
-        if age > 5:
+        if status == "STARTING" and age <= 5:
+            _row("INFO", "Live state", "Watcher starting up — connecting to PLC")
+        elif age > 5:
             _row("WARN", "Live state", f"Stale — last update {age:.0f}s ago",
                  "plc_watcher may have lost PLC connection — check journalctl -u plc_watcher")
         elif not connected:
@@ -357,8 +359,21 @@ def check_plc_state():
                 _row("INFO", "Weight", f"{weight:.2f}g  (target {target:.0f}g)")
 
     except FileNotFoundError:
-        _row("WARN", "Live state", f"{LIVE_STATE} not found",
-             "plc_watcher is not running — sudo systemctl start plc_watcher")
+        # File missing — distinguish "watcher down" from "watcher just started".
+        try:
+            active = subprocess.run(
+                ["systemctl", "is-active", "--quiet", "plc_watcher"]
+            ).returncode == 0
+        except Exception:
+            active = False
+        if active:
+            _row("WARN", "Live state",
+                 f"{LIVE_STATE} not found, but plc_watcher is running",
+                 "Watcher just started or is stuck before first write — "
+                 "wait a few seconds, or: plc_checkweigher fix -errors")
+        else:
+            _row("ERR", "Live state", f"{LIVE_STATE} not found",
+                 "plc_watcher is not running — sudo systemctl start plc_watcher")
     except Exception as e:
         _row("WARN", "Live state", str(e))
 

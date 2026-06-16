@@ -1088,18 +1088,56 @@ SMBC
             echo ""
         fi
 
-        # ── 8. plc_live.json staleness ────────────────────────────────────────
+        # ── 8. Live state file (/tmp/plc_live.json) — service-aware repair ─────
+        # The watcher writes this file continuously. If it is missing or stale
+        # we decide the fix by the service state, not by the file alone:
+        #   • watcher inactive          → start it
+        #   • watcher active + missing  → stuck before first write → restart
+        #   • watcher active + stale    → lost PLC / stuck loop     → restart
+        # After any restart we wait briefly and confirm the file reappears.
         spin_start "Live state file (/tmp/plc_live.json)"
-        if [[ -f "/tmp/plc_live.json" ]]; then
-            _AGE=$(( $(date +%s) - $(stat -c %Y /tmp/plc_live.json 2>/dev/null || echo 0) ))
-            if [[ "${_AGE:-0}" -gt 10 ]]; then
-                ffix_warn "plc_live.json is ${_AGE}s old — watcher may be stuck or offline"
-                flog "WARN: plc_live.json stale (${_AGE}s old)"
+        _LIVE="/tmp/plc_live.json"
+        _WATCHER_ACTIVE=0
+        systemctl is-active --quiet plc_watcher 2>/dev/null && _WATCHER_ACTIVE=1
+
+        _LIVE_PROBLEM=""   # empty = healthy
+        if [[ -f "$_LIVE" ]]; then
+            _AGE=$(( $(date +%s) - $(stat -c %Y "$_LIVE" 2>/dev/null || echo 0) ))
+            [[ "${_AGE:-0}" -gt 10 ]] && _LIVE_PROBLEM="stale (${_AGE}s old)"
+        else
+            _LIVE_PROBLEM="missing"
+        fi
+
+        if [[ -z "$_LIVE_PROBLEM" ]]; then
+            ffix_info "plc_live.json updated ${_AGE}s ago  (OK)"
+        elif [[ $_WATCHER_ACTIVE -eq 0 ]]; then
+            ffix_warn "plc_live.json ${_LIVE_PROBLEM} — plc_watcher is not running"
+            flog "WARN: live state ${_LIVE_PROBLEM}; plc_watcher inactive"
+            spin_start "Starting plc_watcher"
+            sudo systemctl start plc_watcher 2>/dev/null || true
+            sleep 4
+            if [[ -f "$_LIVE" ]]; then
+                ffix_ok "plc_watcher started — live state now being written"
             else
-                ffix_info "plc_live.json updated ${_AGE}s ago  (OK)"
+                ffix_err "plc_watcher started but live state still missing — check: journalctl -u plc_watcher"
             fi
         else
-            ffix_info "plc_live.json absent  (normal — created when watcher connects)"
+            # Service is up but the file is missing/stale → watcher stuck. Restart.
+            ffix_warn "plc_live.json ${_LIVE_PROBLEM} while plc_watcher is running — restarting watcher"
+            flog "WARN: live state ${_LIVE_PROBLEM}; watcher active → restart"
+            spin_start "Restarting plc_watcher"
+            sudo systemctl restart plc_watcher 2>/dev/null || true
+            sleep 4
+            if [[ -f "$_LIVE" ]]; then
+                _AGE2=$(( $(date +%s) - $(stat -c %Y "$_LIVE" 2>/dev/null || echo 0) ))
+                if [[ "${_AGE2:-99}" -le 10 ]]; then
+                    ffix_ok "Watcher restarted — live state fresh (${_AGE2}s old)"
+                else
+                    ffix_warn "Watcher restarted but live state still stale — PLC may be unreachable"
+                fi
+            else
+                ffix_err "Watcher restarted but live state still missing — check: journalctl -u plc_watcher"
+            fi
         fi
 
         # ── 9. reader script path ─────────────────────────────────────────────

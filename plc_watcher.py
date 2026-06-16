@@ -183,16 +183,33 @@ def start_smb_retry_worker():
 
 def main():
     print("[watcher] PLC Start Watcher started.")
+    # Write an initial live-state file IMMEDIATELY so /tmp/plc_live.json always
+    # exists while the watcher process is alive. /tmp is cleared on every boot,
+    # and recover_interrupted_batch() + connect() below can take several seconds
+    # — without this, diagnostics would mis-report "watcher not running" during
+    # the whole startup window.
+    _write_kiosk({"ts": time.time(), "source": "watcher",
+                   "plc_connected": False, "running": False,
+                   "status": "STARTING", "item_event": None})
     recover_interrupted_batch()
     start_smb_retry_worker()
     plc = connect()
 
     try:
         prev_m102 = read_m102(plc)
+        _connected = True
     except Exception:
         prev_m102 = 0
+        _connected = False
     print(f"[watcher] M102 initial state = {prev_m102}  "
           f"({'RUNNING' if prev_m102 else 'STOPPED'})\n")
+    # Reflect the just-confirmed connection state right away — don't wait for the
+    # 3 s stabilization heartbeat to first populate the live-state file.
+    _write_kiosk({"ts": time.time(), "source": "watcher",
+                   "plc_connected": _connected, "running": bool(prev_m102),
+                   "status": ("RUNNING" if prev_m102 else "IDLE")
+                             if _connected else "OFFLINE",
+                   "item_event": None})
 
     # Machine already running when watcher starts — launch reader immediately.
     if prev_m102:
