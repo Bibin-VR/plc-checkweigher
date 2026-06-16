@@ -127,6 +127,15 @@ def float32(regs: list, offset: int = 0) -> float:
     return struct.unpack(">f", struct.pack(">HH", hi, lo))[0]
 
 
+def float64(regs: list, offset: int = 0) -> float:
+    """MELSEC DEMOV/DESUB: 4 words w0=LSW…w3=MSW at consecutive addresses."""
+    w0 = regs[offset]     & 0xFFFF
+    w1 = regs[offset + 1] & 0xFFFF
+    w2 = regs[offset + 2] & 0xFFFF
+    w3 = regs[offset + 3] & 0xFFFF
+    return struct.unpack(">d", struct.pack(">HHHH", w3, w2, w1, w0))[0]
+
+
 def safe_read(plc, head: str, count: int) -> list:
     for attempt in range(2):
         try:
@@ -192,12 +201,13 @@ def fetch(plc) -> dict:
     r_d18   = safe_read(plc, "D18",    16)
     r_d200  = safe_read(plc, "D200",   12)
     r_d257  = safe_read(plc, "D257",    4)
-    r_d280  = safe_read(plc, "D280",    4)   # D280+D281 ProdWt, D282+D283 ReadWt
+    r_d280  = safe_read(plc, "D280",    2)   # D280+D281 ProdWt (nominal, EMOV float32)
     r_d290  = safe_read(plc, "D290",    4)
     r_d2001 = safe_read(plc, "D2001",  15)
     r_sd    = safe_read(plc, "SD8013",  6)
     r_d4000 = safe_read(plc, "D4000",  11)  # D4000 Status, D4010 Result
     r_d3002 = safe_read(plc, "D3002",   2)  # Pallet counter (DMOV C102→D3002, 32-bit)
+    r_d4700 = safe_read(plc, "D4700",   4)  # D4700-D4703: net weight (DESUB double64)
 
     try:
         sc = bcd(r_sd[0]); mn = bcd(r_sd[1]); hr = bcd(r_sd[2])
@@ -209,8 +219,8 @@ def fetch(plc) -> dict:
         date_str = now.strftime("%d/%m/%Y")
         time_str = now.strftime("%H:%M:%S")
 
-    pw = float32(r_d280, 0)    # D280(lo)+D281(hi) — nominal weight (EMOV D6020→D280)
-    rw = float32(r_d280, 2)   # D282(lo)+D283(hi) — read weight (live, confirmed 508g)
+    pw = float32(r_d280, 0)    # D280+D281 — nominal weight (EMOV D6020→D280, float32)
+    rw = float64(r_d4700, 0)  # D4700-D4703 — net read weight (DESUB D750-D4050, double64)
 
     return {
         "batch_no"      : r_d8[0],                        # HMI-entered
@@ -380,12 +390,13 @@ def main():
 
             # ── Live weight read for kiosk dashboard ─────────────────────────
             try:
-                r_live   = plc.batchread_wordunits(headdevice="D280", readsize=4)
-                live_w   = float32(r_live, 2)   # D282+D283
-                target_w = float32(r_live, 0)   # D280+D281
-                r_lim    = plc.batchread_wordunits(headdevice="D500", readsize=12)
-                lower_lim = float32(r_lim, 0)   # D500+D501
-                upper_lim = float32(r_lim, 10)  # D510+D511
+                r_live_pw = plc.batchread_wordunits(headdevice="D280", readsize=2)
+                target_w  = float32(r_live_pw, 0)  # D280+D281 nominal weight (float32)
+                r_live_rw = plc.batchread_wordunits(headdevice="D4700", readsize=4)
+                live_w    = float64(r_live_rw, 0)  # D4700-D4703 net weight (double64)
+                r_lim     = plc.batchread_wordunits(headdevice="D500", readsize=12)
+                lower_lim = float32(r_lim, 0)      # D500+D501
+                upper_lim = float32(r_lim, 10)     # D510+D511
             except Exception:
                 pass   # keep previous values — M102 failure below will handle reconnect
 
@@ -506,7 +517,7 @@ def main():
 
                 last_pallet = snap_pallet
 
-                # Wait for the PLC to finish writing D282+D283 (read weight).
+                # Wait for the PLC to finish writing D4700-D4703 (net weight, DESUB result).
                 time.sleep(1.0)
 
                 try:

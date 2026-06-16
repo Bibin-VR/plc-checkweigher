@@ -125,7 +125,7 @@ M102 falling edge = STOP pressed → end batch, build PDF.
 | D200[11] | 1 | ascii_str | Weighing scale ID |
 | D257 | 4 | ascii_str | Machine name |
 | D280+D281 | 2 | float32 (EMOV lo/hi) | Product (nominal) weight in grams |
-| D282+D283 | 2 | float32 (EMOV lo/hi) | Read (actual) weight in grams |
+| D4700–D4703 | 4 | float64 (DESUB double64) | Net read weight in grams — result of `DESUB D750, D4050, D4700` (gross − tare) |
 | D290 | 4 | ascii_str | Stage |
 | D500+D501 | 2 | float32 | Lower weight limit |
 | D510+D511 | 2 | float32 | Upper weight limit |
@@ -141,6 +141,12 @@ M102 falling edge = STOP pressed → end batch, build PDF.
 lo = regs[offset]     & 0xFFFF
 hi = regs[offset + 1] & 0xFFFF
 val = struct.unpack(">f", struct.pack(">HH", hi, lo))[0]
+```
+
+**float64 decode (DEMOV/DESUB format — 4 words, w0=LSW…w3=MSW):**
+```python
+w0, w1, w2, w3 = [regs[offset+i] & 0xFFFF for i in range(4)]
+val = struct.unpack(">d", struct.pack(">HHHH", w3, w2, w1, w0))[0]
 ```
 
 **ascii_str decode ($MOV format — lo-byte first):**
