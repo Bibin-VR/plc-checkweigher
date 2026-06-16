@@ -174,12 +174,13 @@ restart)
     need_sudo
     banner "Restarting services"
     echo ""
-    spin_start "Restarting plc_watcher and plc_web"
-    sudo systemctl restart plc_watcher plc_web
+    spin_start "Restarting plc_watcher, plc_web and plc_selfheal"
+    sudo systemctl restart plc_watcher plc_web plc_selfheal 2>/dev/null \
+        || sudo systemctl restart plc_watcher plc_web
     sleep 2
     spin_ok
     echo ""
-    systemctl status plc_watcher plc_web --no-pager | grep -E 'Active|Main PID'
+    systemctl status plc_watcher plc_web plc_selfheal --no-pager 2>/dev/null | grep -E 'Active|Main PID'
     echo ""
     ;;
 
@@ -187,8 +188,9 @@ start)
     need_sudo
     banner "Starting services"
     echo ""
-    spin_start "Starting plc_watcher and plc_web"
-    sudo systemctl start plc_watcher plc_web
+    spin_start "Starting plc_watcher, plc_web and plc_selfheal"
+    sudo systemctl start plc_watcher plc_web plc_selfheal 2>/dev/null \
+        || sudo systemctl start plc_watcher plc_web
     sleep 1
     spin_ok
     echo ""
@@ -198,12 +200,15 @@ stop)
     need_sudo
     banner "Stopping services"
     echo ""
-    spin_start "Stopping plc_watcher and plc_web"
+    # Stop the self-healing daemon FIRST — otherwise it would detect the
+    # watcher/web going down and immediately restart them, fighting this stop.
+    spin_start "Stopping plc_selfheal, plc_watcher and plc_web"
+    sudo systemctl stop plc_selfheal 2>/dev/null || true
     sudo systemctl stop plc_watcher plc_web
     spin_ok
     echo ""
     warn "Services stopped — will restart automatically on next boot"
-    warn "To disable auto-start: sudo systemctl disable plc_watcher plc_web"
+    warn "To disable auto-start: sudo systemctl disable plc_watcher plc_web plc_selfheal"
     echo ""
     ;;
 
@@ -233,6 +238,87 @@ queue)
         info "No deliveries recorded yet"
     fi
     echo ""
+    ;;
+
+# ── Self-healing daemon ────────────────────────────────────────────────────────
+selfheal)
+    SUBCMD="${1:-status}"
+    shift || true
+    case "$SUBCMD" in
+    status)
+        banner "Self-Healing Daemon"
+        echo ""
+        ACTIVE=$(systemctl is-active   plc_selfheal 2>/dev/null || true)
+        ENABLED=$(systemctl is-enabled plc_selfheal 2>/dev/null || true)
+        if [[ "$ACTIVE" == "active" ]]; then
+            ok "plc_selfheal: RUNNING  (auto-start: ${ENABLED})"
+        else
+            warn "plc_selfheal: ${ACTIVE}  (auto-start: ${ENABLED})"
+            info "Start it:  sudo systemctl start plc_selfheal"
+        fi
+        echo ""
+        # Last-cycle / throttle state
+        _ST="/home/pi/reports/health/.selfheal_state.json"
+        if [[ -f "$_ST" ]]; then
+            "${PYTHON}" - "$_ST" << 'PYEOF' 2>/dev/null || true
+import json, sys, time
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+lc = d.get("last_cycle", 0)
+if lc:
+    age = int(time.time() - lc)
+    print(f"  Last self-heal sweep: {age}s ago")
+rep = d.get("reported", {})
+if rep:
+    print(f"  Active unresolved problems: {len(rep)}")
+    for k in rep: print(f"     • {k}")
+else:
+    print("  No unresolved problems")
+PYEOF
+        else
+            info "No sweep has run yet (daemon may have just started)"
+        fi
+        echo ""
+        # Pending health reports on disk
+        _HD="/home/pi/reports/health"
+        if [[ -d "$_HD" ]]; then
+            _N=$(find "$_HD" -maxdepth 1 -name 'health_*.txt' 2>/dev/null | wc -l)
+            [[ "${_N:-0}" -gt 0 ]] && info "${_N} health report(s) in ${_HD}"
+        fi
+        echo ""
+        info "Recent activity:  plc_checkweigher selfheal logs"
+        echo ""
+        ;;
+    logs)
+        banner "Self-Heal Logs"
+        echo ""
+        exec journalctl -u plc_selfheal -n 50 -f --no-pager
+        ;;
+    now|run)
+        banner "Self-Heal — Immediate Sweep"
+        need_sudo
+        echo ""
+        spin_start "Running one self-heal cycle"
+        sudo "${PYTHON}" -c "
+import sys; sys.path.insert(0, '${INSTALL_DIR}')
+import selfheal
+healed, failed, env = selfheal.run_cycle()
+selfheal.maybe_report(healed, failed, env)
+print('HEALED:', len(healed), '| UNRESOLVED:', len(failed))
+for k,d in healed: print('  [HEALED]', k, '-', d)
+for k,d in failed: print('  [FAIL]  ', k, '-', d)
+" && spin_ok || spin_warn "Cycle completed with issues"
+        echo ""
+        ;;
+    *)
+        echo "Usage: plc_checkweigher selfheal [status|logs|now]"
+        echo "  status  — daemon state, last sweep, unresolved problems (default)"
+        echo "  logs    — follow the self-heal journal"
+        echo "  now     — run one self-heal sweep immediately"
+        ;;
+    esac
     ;;
 
 # ── Push test ─────────────────────────────────────────────────────────────────
@@ -1296,7 +1382,8 @@ update)
     # ── Update systemd unit files if they changed ─────────────────────────────
     _UNITS_UPDATED=0
     for _svc_src in "${INSTALL_DIR}/plc_watcher.service" \
-                    "${INSTALL_DIR}/web/plc_web.service"; do
+                    "${INSTALL_DIR}/web/plc_web.service" \
+                    "${INSTALL_DIR}/plc_selfheal.service"; do
         [[ ! -f "$_svc_src" ]] && continue
         _svc_dst="/etc/systemd/system/$(basename "$_svc_src")"
         if [[ ! -f "$_svc_dst" ]] || ! diff -q "$_svc_src" "$_svc_dst" &>/dev/null; then
@@ -1307,6 +1394,22 @@ update)
         spin_start "Reloading systemd  (unit files changed)"
         sudo systemctl daemon-reload 2>/dev/null || true
         spin_ok "systemd reloaded"
+    fi
+
+    # ── Self-healing daemon present + enabled (retrofit older installs) ────────
+    spin_start "Self-healing daemon"
+    if [[ -f "${INSTALL_DIR}/selfheal.py" && -f /etc/systemd/system/plc_selfheal.service ]]; then
+        if ! systemctl is-enabled --quiet plc_selfheal 2>/dev/null; then
+            sudo systemctl enable plc_selfheal 2>/dev/null || true
+            spin_ok "plc_selfheal enabled"
+        elif ! systemctl is-active --quiet plc_selfheal 2>/dev/null; then
+            sudo systemctl start plc_selfheal 2>/dev/null || true
+            spin_ok "plc_selfheal started"
+        else
+            spin_ok "plc_selfheal active"
+        fi
+    else
+        spin_warn "selfheal.py or unit missing — will be installed on next full setup"
     fi
 
     # ── Update Plymouth boot splash ───────────────────────────────────────────
@@ -1566,6 +1669,7 @@ SUDOEOF
     if [[ $_CODE_CHANGED -eq 1 || $_UNITS_UPDATED -eq 1 ]]; then
         spin_start "Restarting services"
         sudo systemctl restart plc_watcher plc_web 2>/dev/null
+        sudo systemctl restart plc_selfheal 2>/dev/null || true
         sleep 2
         spin_ok "Services restarted"
     else
@@ -1699,12 +1803,13 @@ uninstall)
     # ── 1. Stop and disable services ─────────────────────────────────────────
     echo ""
     ustep "Stopping and disabling services"
-    for SVC in plc_watcher plc_web; do
+    for SVC in plc_selfheal plc_watcher plc_web; do
         systemctl is-active  --quiet "$SVC" 2>/dev/null && sudo systemctl stop    "$SVC" 2>/dev/null || true
         systemctl is-enabled --quiet "$SVC" 2>/dev/null && sudo systemctl disable "$SVC" 2>/dev/null || true
     done
     sudo rm -f /etc/systemd/system/plc_watcher.service \
-               /etc/systemd/system/plc_web.service
+               /etc/systemd/system/plc_web.service \
+               /etc/systemd/system/plc_selfheal.service
     spin_ok "Services removed"
 
     # ── 2. System drop-ins ───────────────────────────────────────────────────
@@ -1858,11 +1963,14 @@ help|--help|-h)
     echo "    fix -errors                Scan journal, verify RT/permissions/PLC/config"
     echo "    logs                       Stream live logs (plc_watcher + plc_web)"
     echo "    queue                      Show SMB pending queue and delivery ledger"
+    echo "    selfheal status            Self-healing daemon state + unresolved problems"
+    echo "    selfheal logs              Follow the self-heal journal"
+    echo "    selfheal now               Run one self-heal sweep immediately"
     echo ""
     echo -e "  ${W}Services${NC}"
-    echo "    start                      Start plc_watcher and plc_web"
-    echo "    stop                       Stop both services"
-    echo "    restart                    Restart both services"
+    echo "    start                      Start watcher, web and self-heal"
+    echo "    stop                       Stop all services"
+    echo "    restart                    Restart all services"
     echo ""
     echo -e "  ${W}Network${NC}"
     echo "    wifi                       Scan and switch WiFi network"

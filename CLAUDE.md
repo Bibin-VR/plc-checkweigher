@@ -60,6 +60,20 @@ Industrial check-weigher data logger for a **Mitsubishi PLC** line at **Sai Sama
 ├── pdf_receiver.py         Optional HTTP receiver for the target PC (alternative to SMB).
 │                           Run on target: python3 pdf_receiver.py --port 9090 --open
 │
+├── selfheal.py             Self-healing daemon (systemd: plc_selfheal, runs as root,
+│                           cores 0-2, Nice 10). Every 120s detects→heals→verifies:
+│                           service down (restart), live-state missing/stale (restart
+│                           watcher), NetworkManager down (restart), data/ missing or
+│                           wrong owner (recreate/chown), corrupt delivery_queue.json
+│                           (reset, backup kept), missing ledger/queue (recreate).
+│                           Unresolvable faults (smb_config syntax, PLC/SMB down) are
+│                           written to /home/pi/reports/health/health_*.txt and pushed
+│                           to the SMB share health/ folder (store-and-forward, throttled
+│                           1/hour per problem). Lifecycle tied to start/stop/restart so
+│                           it never fights an operator-issued stop.
+│
+├── plc_selfheal.service    Systemd unit for the self-healing daemon.
+│
 ├── plc_watcher.service     Systemd unit (SCHED_FIFO:50, CPUAffinity=3, IOClass=realtime).
 │                           Installed to /etc/systemd/system/ by setup.sh.
 │
@@ -335,8 +349,9 @@ Never use system python3 for this project.
 |---|---|---|---|
 | `plc_watcher` | `/etc/systemd/system/plc_watcher.service` | SCHED_FIFO:50, CPU core 3 | PLC watcher + reader |
 | `plc_web` | `/etc/systemd/system/plc_web.service` | Nice=-10 | Flask report server |
+| `plc_selfheal` | `/etc/systemd/system/plc_selfheal.service` | Nice=10, cores 0-2, root | Self-healing daemon (auto-repair + health reports) |
 
-Both `enabled` — start on every boot. Both defined in `After=network-online.target`.
+All `enabled` — start on every boot. `plc_checkweigher selfheal status|logs|now` controls the daemon.
 
 ---
 

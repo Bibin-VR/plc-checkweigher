@@ -432,9 +432,37 @@ WantedBy=multi-user.target
 EOF
     ok "plc_web.service       (Nice=-10)"
 
+    # ── Self-healing daemon — auto-repairs services/files/configs at runtime ──
+    cat > /etc/systemd/system/plc_selfheal.service << EOF
+[Unit]
+Description=PLC Check-Weigher Self-Healing Daemon
+After=network.target plc_watcher.service plc_web.service
+Wants=plc_watcher.service plc_web.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${INSTALL_DIR}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=${VENV_DIR}/bin/python3 -u ${INSTALL_DIR}/selfheal.py
+Restart=always
+RestartSec=10
+Nice=10
+CPUAffinity=0 1 2
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    cp /etc/systemd/system/plc_selfheal.service "${INSTALL_DIR}/plc_selfheal.service"
+    chown "${PI_USER}:${PI_USER}" "${INSTALL_DIR}/plc_selfheal.service"
+    ok "plc_selfheal.service  (auto-repair · cores 0-2 · Nice=10)"
+
     systemctl daemon-reload
-    systemctl enable plc_watcher.service plc_web.service
-    ok "Both services enabled — start automatically after reboot"
+    systemctl enable plc_watcher.service plc_web.service plc_selfheal.service
+    ok "All services enabled — start automatically after reboot"
 
     cp /etc/systemd/system/plc_watcher.service "${INSTALL_DIR}/plc_watcher.service"
     chown "${PI_USER}:${PI_USER}" "${INSTALL_DIR}/plc_watcher.service"

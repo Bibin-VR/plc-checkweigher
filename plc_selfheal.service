@@ -1,0 +1,24 @@
+[Unit]
+Description=PLC Check-Weigher Self-Healing Daemon
+After=network.target plc_watcher.service plc_web.service
+Wants=plc_watcher.service plc_web.service
+
+[Service]
+Type=simple
+# Runs as root so it can restart services, fix file ownership, and bounce
+# NetworkManager without an interactive sudo prompt.
+User=root
+WorkingDirectory=/home/pi/plc_checkweigher
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pi/plc_env/bin/python3 -u /home/pi/plc_checkweigher/selfheal.py
+Restart=always
+RestartSec=10
+# Low priority, kept off the RT core (3) so it never disturbs the PLC watcher.
+Nice=10
+CPUAffinity=0 1 2
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
