@@ -198,51 +198,39 @@ def read_bits(plc) -> tuple:
 # ── Full register fetch ───────────────────────────────────────────────────────
 
 def fetch(plc) -> dict:
-    r_d8    = safe_read(plc, "D8",      1)
-    r_d18   = safe_read(plc, "D18",    16)
-    r_d200  = safe_read(plc, "D200",   12)
-    r_d257  = safe_read(plc, "D257",    4)
-    r_d290  = safe_read(plc, "D290",    4)
-    r_d2001 = safe_read(plc, "D2001",  15)
-    r_sd    = safe_read(plc, "SD8013",  6)
-    r_d4000 = safe_read(plc, "D4000",  11)  # D4000 Status, D4010 Result
-    r_d3002 = safe_read(plc, "D3002",   2)  # Pallet counter (DMOV C102→D3002, 32-bit)
-
-    try:
-        sc = bcd(r_sd[0]); mn = bcd(r_sd[1]); hr = bcd(r_sd[2])
-        dy = bcd(r_sd[3]); mo = bcd(r_sd[4]); yr = 2000 + bcd(r_sd[5])
-        date_str = f"{dy:02d}/{mo:02d}/{yr}"
-        time_str = f"{hr:02d}:{mn:02d}:{sc:02d}"
-    except Exception:
-        now = datetime.now()
-        date_str = now.strftime("%d/%m/%Y")
-        time_str = now.strftime("%H:%M:%S")
-
-    # Weight sources resolved via regmap (data/register_map.json override aware,
-    # with built-in fallback) so a ladder register move never silently reads 0.
+    # Every field is resolved through regmap — the single source of truth for
+    # which register holds what (override-aware via data/register_map.json, with
+    # built-in fallback). So a ladder register move never silently reads 0/blank
+    # and `fix -registers` can re-point the whole project by editing one file.
     _rd = lambda dev, n: safe_read(plc, dev, n)
-    pw = regmap.read_value(_rd, "product_weight")   # nominal weight
-    rw = regmap.read_value(_rd, "read_weight")       # net/gross read weight
+    f = regmap.read_fields(_rd)
 
+    # Date & time come from the Raspberry Pi clock (the PLC's SD8013 clock was
+    # inconsistent). The Pi is NTP-synced and stable.
+    now = datetime.now()
+    date_str = now.strftime("%d/%m/%Y")
+    time_str = now.strftime("%H:%M:%S")
+
+    pallet = int(f.get("pallet", 0) or 0)
     return {
-        "batch_no"      : r_d8[0],                        # HMI-entered
-        "product_name"  : ascii_str(r_d18[0:10]),
-        "operator_id"   : ascii_str(r_d200[0:8]),
-        "weighing_scale": ascii_str(r_d200[11:12] + [0]),
-        "machine"       : ascii_str(r_d257[0:4]),
-        "description"   : ascii_str(r_d18[6:12]),
-        "stage"         : ascii_str(r_d290[0:4]),
-        "pallet_no"     : r_d3002[0] | (r_d3002[1] << 16),  # C102; 1-based (M29 pre-increments to 1)
+        "batch_no"      : f.get("batch_no", 0),
+        "product_name"  : f.get("product_name", ""),
+        "operator_id"   : f.get("operator_id", ""),
+        "weighing_scale": f.get("weighing_scale", ""),
+        "machine"       : f.get("machine", ""),
+        "description"   : f.get("description", ""),
+        "stage"         : f.get("stage", ""),
+        "pallet_no"     : pallet,
         "date"          : date_str,
         "time"          : time_str,
         "datetime"      : f"{date_str}  {time_str}",
-        "pallet"        : r_d3002[0] | (r_d3002[1] << 16),
-        "lot_no"        : r_d18[14],                      # D32 — HMI-entered
-        "product_weight": f"{pw:.0f}",
-        "read_weight"   : f"{rw:.3f}",
-        "status"        : ascii_str(r_d4000[0:8]),
-        "result"        : ascii_str(r_d4000[10:11] + [0]),
-        "barcode"       : ascii_str(r_d2001),
+        "pallet"        : pallet,
+        "lot_no"        : f.get("lot_no", 0),
+        "product_weight": f"{float(f.get('product_weight') or 0):.0f}",
+        "read_weight"   : f"{float(f.get('read_weight') or 0):.3f}",
+        "status"        : f.get("status", ""),
+        "result"        : f.get("result", ""),
+        "barcode"       : f.get("barcode", ""),
     }
 
 
@@ -395,9 +383,8 @@ def main():
                 _rd_live  = lambda dev, n: plc.batchread_wordunits(headdevice=dev, readsize=n)
                 target_w  = regmap.read_value(_rd_live, "product_weight")  # nominal
                 live_w    = regmap.read_value(_rd_live, "read_weight")      # net/gross
-                r_lim     = plc.batchread_wordunits(headdevice="D500", readsize=12)
-                lower_lim = float32(r_lim, 0)      # D500+D501
-                upper_lim = float32(r_lim, 10)     # D510+D511
+                lower_lim = regmap.read_value(_rd_live, "lower_limit")      # D500+D501
+                upper_lim = regmap.read_value(_rd_live, "upper_limit")      # D510+D511
             except Exception:
                 pass   # keep previous values — M102 failure below will handle reconnect
 

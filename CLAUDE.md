@@ -153,7 +153,7 @@ M102 falling edge = STOP pressed → end batch, build PDF.
 | D3300 | 1 | signed int | Remaining items in current pallet (D3300=0 → pallet full) |
 | D4000 | 8 | ascii_str | Status string |
 | D4010 | 1 | ascii_str | Result |
-| SD8013 | 6 | BCD bytes | PLC clock: sec, min, hr, day, month, year(offset 2000) |
+| SD8013 | 6 | BCD bytes | PLC clock — NO LONGER USED (report date/time taken from the Pi) |
 
 **float32 decode (EMOV format):**
 ```python
@@ -170,22 +170,28 @@ val = struct.unpack(">d", struct.pack(">HHHH", w3, w2, w1, w0))[0]
 
 ### Register resolution — `regmap.py`
 
-Weight registers are **not hard-coded** in `plc_reader.py` / `plc_report.py`.
-They are resolved at runtime by `regmap.py`, which is override-aware and has a
-built-in fallback so a ladder register move never silently reads 0:
+**Every** PLC field (not just weights) is declared once in `regmap.FIELDS` and
+resolved at runtime — `plc_reader.py` and `plc_report.py` read through
+`regmap.read_fields()` / `read_value()`. So the register map is the single
+source of truth: re-point one field and the whole project follows.
 
-- `read_weight` default: try **D4700** (float64, net) → fall back to **D282**
-  (float32, gross) if D4700 is zero/invalid.
-- `product_weight` default: **D280** (float32).
-- Optional override file `data/register_map.json` (written by the scanner)
-  takes precedence, e.g. `{"read_weight": {"device":"D282","words":2,"format":"float32"}}`.
+- Override file `data/register_map.json` (written by the scanner) is merged over
+  `FIELDS`, e.g. `{"read_weight": {"device":"D282","words":2,"format":"float32"}}`.
+- `read_weight` default: **D4700** (float64, net) → fallback **D282** (float32,
+  gross) if zero/invalid. `product_weight`: **D280** (float32).
+- **Date & time come from the Raspberry Pi clock**, NOT the PLC (SD8013 was
+  inconsistent). The Pi is NTP-synced.
 
-`plc_checkweigher fix -registers` connects to the live PLC, decodes every known
-+ candidate register, and — when an item is on the scale and the active read
-weight reads 0 — auto-detects the real register and writes
-`data/register_map.json` (then restarts the watcher). Run it **during
-production** so the live weight registers are populated. Idle = all zeros, so it
-just reports and exits without changing anything.
+`plc_checkweigher fix -registers` reads the live PLC, decodes every field plus a
+broad D-area sweep, validates each field against a signature, and re-locates
+moved registers:
+- **Distinctive** signatures (weight / status enum / barcode) → auto-detected
+  and written to `register_map.json`, then the watcher is restarted.
+- **Ambiguous** fields (free text, plain ints — indistinguishable once moved)
+  are never guessed; the scanner lists candidates for manual confirmation so it
+  can't assign a wrong register.
+- Run it **during production** (an item on the scale) so transient weight/status
+  registers are populated. Idle = reports only, no changes.
 
 **ascii_str decode ($MOV format — lo-byte first):**
 ```python

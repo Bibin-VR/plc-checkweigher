@@ -132,15 +132,10 @@ def fetch() -> dict:
 
 def _decode(r_d8, r_d18, r_d200, r_d257,
             r_d280, r_d290, r_d2001, r_sd, r_d4000, r_d3002) -> dict:
-    try:
-        sc = bcd(r_sd[0]); mn = bcd(r_sd[1]); hr = bcd(r_sd[2])
-        dy = bcd(r_sd[3]); mo = bcd(r_sd[4]); yr = 2000 + bcd(r_sd[5])
-        date_str = f"{dy:02d}/{mo:02d}/{yr}"
-        time_str = f"{hr:02d}:{mn:02d}:{sc:02d}"
-    except Exception:
-        now = datetime.now()
-        date_str = now.strftime("%d/%m/%Y")
-        time_str = now.strftime("%H:%M:%S")
+    # Date & time from the Raspberry Pi clock (PLC clock was inconsistent).
+    now = datetime.now()
+    date_str = now.strftime("%d/%m/%Y")
+    time_str = now.strftime("%H:%M:%S")
 
     pw = float32(r_d280, 0)    # D280(lo)+D281(hi) — nominal weight
     rw = float32(r_d280, 2)   # D282(lo)+D283(hi) — read weight

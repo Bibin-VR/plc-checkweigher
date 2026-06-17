@@ -1263,7 +1263,7 @@ sys.exit(10 if changed else 0)
         while IFS= read -r _rl; do flog "REG: $_rl"; done <<< "$_REG_OUT"
         echo ""
         if [[ $_REG_RC -eq 10 ]]; then
-            ffix_ok "Register map auto-corrected — read weight remapped"
+            ffix_ok "Register map auto-corrected — moved register(s) remapped"
             # New map takes effect on the reader's next item; restart to apply now.
             sudo systemctl restart plc_watcher 2>/dev/null || true
             ffix_info "plc_watcher restarted to apply the new register map"
