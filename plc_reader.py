@@ -20,6 +20,7 @@ from datetime import datetime
 from pymcprotocol import Type3E
 from plc_report import build_pdf, PDF_DIR
 from pdf_push import push_pdf_sync
+import regmap
 
 PLC_IP            = "192.168.3.250"
 PLC_PORT          = 1025
@@ -201,13 +202,11 @@ def fetch(plc) -> dict:
     r_d18   = safe_read(plc, "D18",    16)
     r_d200  = safe_read(plc, "D200",   12)
     r_d257  = safe_read(plc, "D257",    4)
-    r_d280  = safe_read(plc, "D280",    2)   # D280+D281 ProdWt (nominal, EMOV float32)
     r_d290  = safe_read(plc, "D290",    4)
     r_d2001 = safe_read(plc, "D2001",  15)
     r_sd    = safe_read(plc, "SD8013",  6)
     r_d4000 = safe_read(plc, "D4000",  11)  # D4000 Status, D4010 Result
     r_d3002 = safe_read(plc, "D3002",   2)  # Pallet counter (DMOV C102→D3002, 32-bit)
-    r_d4700 = safe_read(plc, "D4700",   4)  # D4700-D4703: net weight (DESUB double64)
 
     try:
         sc = bcd(r_sd[0]); mn = bcd(r_sd[1]); hr = bcd(r_sd[2])
@@ -219,8 +218,11 @@ def fetch(plc) -> dict:
         date_str = now.strftime("%d/%m/%Y")
         time_str = now.strftime("%H:%M:%S")
 
-    pw = float32(r_d280, 0)    # D280+D281 — nominal weight (EMOV D6020→D280, float32)
-    rw = float64(r_d4700, 0)  # D4700-D4703 — net read weight (DESUB D750-D4050, double64)
+    # Weight sources resolved via regmap (data/register_map.json override aware,
+    # with built-in fallback) so a ladder register move never silently reads 0.
+    _rd = lambda dev, n: safe_read(plc, dev, n)
+    pw = regmap.read_value(_rd, "product_weight")   # nominal weight
+    rw = regmap.read_value(_rd, "read_weight")       # net/gross read weight
 
     return {
         "batch_no"      : r_d8[0],                        # HMI-entered
@@ -390,10 +392,9 @@ def main():
 
             # ── Live weight read for kiosk dashboard ─────────────────────────
             try:
-                r_live_pw = plc.batchread_wordunits(headdevice="D280", readsize=2)
-                target_w  = float32(r_live_pw, 0)  # D280+D281 nominal weight (float32)
-                r_live_rw = plc.batchread_wordunits(headdevice="D4700", readsize=4)
-                live_w    = float64(r_live_rw, 0)  # D4700-D4703 net weight (double64)
+                _rd_live  = lambda dev, n: plc.batchread_wordunits(headdevice=dev, readsize=n)
+                target_w  = regmap.read_value(_rd_live, "product_weight")  # nominal
+                live_w    = regmap.read_value(_rd_live, "read_weight")      # net/gross
                 r_lim     = plc.batchread_wordunits(headdevice="D500", readsize=12)
                 lower_lim = float32(r_lim, 0)      # D500+D501
                 upper_lim = float32(r_lim, 10)     # D510+D511

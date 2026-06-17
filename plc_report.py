@@ -16,6 +16,7 @@ import struct
 import time
 from datetime import datetime
 from pymcprotocol import Type3E
+import regmap
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -117,8 +118,14 @@ def fetch() -> dict:
     r_d3002 = safe_read(plc, "D3002",   2)  # Pallet counter (DMOV C102→D3002, 32-bit)
 
     try:
-        return _decode(r_d8, r_d18, r_d200, r_d257,
-                       r_d280, r_d290, r_d2001, r_sd, r_d4000, r_d3002)
+        d = _decode(r_d8, r_d18, r_d200, r_d257,
+                    r_d280, r_d290, r_d2001, r_sd, r_d4000, r_d3002)
+        # Resolve weights via regmap (override-aware + fallback) for consistency
+        # with plc_reader, so a ladder register move is honoured everywhere.
+        _rd = lambda dev, n: safe_read(plc, dev, n)
+        d["product_weight"] = f"{regmap.read_value(_rd, 'product_weight'):.0f}"
+        d["read_weight"]    = f"{regmap.read_value(_rd, 'read_weight'):.3f}"
+        return d
     finally:
         plc.close()
 

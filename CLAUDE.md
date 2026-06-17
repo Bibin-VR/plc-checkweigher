@@ -50,6 +50,11 @@ Industrial check-weigher data logger for a **Mitsubishi PLC** line at **Sai Sama
 │                           Report v2: stats = TOTAL / ACCEPTED / REJECTED / PASS RATE only.
 │                           No average or std dev.
 │
+├── regmap.py               Runtime register resolution + PLC register scanner.
+│                           plc_reader/plc_report read weights through this (override
+│                           via data/register_map.json + built-in fallback). Scanner
+│                           backs `plc_checkweigher fix -registers` (auto-corrects map).
+│
 ├── pdf_push.py             Store-and-forward SMB delivery.
 │                           - Immediate push attempt after each PDF.
 │                           - On failure: enqueued in delivery_queue.json (persists reboots).
@@ -162,6 +167,25 @@ val = struct.unpack(">f", struct.pack(">HH", hi, lo))[0]
 w0, w1, w2, w3 = [regs[offset+i] & 0xFFFF for i in range(4)]
 val = struct.unpack(">d", struct.pack(">HHHH", w3, w2, w1, w0))[0]
 ```
+
+### Register resolution — `regmap.py`
+
+Weight registers are **not hard-coded** in `plc_reader.py` / `plc_report.py`.
+They are resolved at runtime by `regmap.py`, which is override-aware and has a
+built-in fallback so a ladder register move never silently reads 0:
+
+- `read_weight` default: try **D4700** (float64, net) → fall back to **D282**
+  (float32, gross) if D4700 is zero/invalid.
+- `product_weight` default: **D280** (float32).
+- Optional override file `data/register_map.json` (written by the scanner)
+  takes precedence, e.g. `{"read_weight": {"device":"D282","words":2,"format":"float32"}}`.
+
+`plc_checkweigher fix -registers` connects to the live PLC, decodes every known
++ candidate register, and — when an item is on the scale and the active read
+weight reads 0 — auto-detects the real register and writes
+`data/register_map.json` (then restarts the watcher). Run it **during
+production** so the live weight registers are populated. Idle = all zeros, so it
+just reports and exits without changing anything.
 
 **ascii_str decode ($MOV format — lo-byte first):**
 ```python

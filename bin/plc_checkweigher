@@ -698,20 +698,23 @@ console-passwd)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FIX — auto-detect and repair common issues
-# Usage: fix [-wifi] [-health] [-programs] [-errors]   (no flags = run all)
+# Usage: fix [-wifi] [-health] [-programs] [-errors] [-registers]  (no flags = all but registers)
 # ─────────────────────────────────────────────────────────────────────────────
 fix)
-    FIX_WIFI=0; FIX_HEALTH=0; FIX_PROGRAMS=0; FIX_ERRORS=0
+    FIX_WIFI=0; FIX_HEALTH=0; FIX_PROGRAMS=0; FIX_ERRORS=0; FIX_REGISTERS=0
     if [[ $# -eq 0 ]]; then
+        # -registers is opt-in only: it talks to the PLC and may rewrite the
+        # register map, so it is excluded from the default "fix everything" run.
         FIX_WIFI=1; FIX_HEALTH=1; FIX_PROGRAMS=1; FIX_ERRORS=1
     else
         for _flag in "$@"; do
             case "$_flag" in
-            -wifi)     FIX_WIFI=1 ;;
-            -health)   FIX_HEALTH=1 ;;
-            -programs) FIX_PROGRAMS=1 ;;
-            -errors)   FIX_ERRORS=1 ;;
-            *) warn "Unknown flag: $_flag  (valid: -wifi  -health  -programs  -errors)" ;;
+            -wifi)      FIX_WIFI=1 ;;
+            -health)    FIX_HEALTH=1 ;;
+            -programs)  FIX_PROGRAMS=1 ;;
+            -errors)    FIX_ERRORS=1 ;;
+            -registers) FIX_REGISTERS=1 ;;
+            *) warn "Unknown flag: $_flag  (valid: -wifi  -health  -programs  -errors  -registers)" ;;
             esac
         done
     fi
@@ -720,10 +723,11 @@ fix)
     mkdir -p "$LOG_DIR" 2>/dev/null || true
     # Build mode tag: "all" or hyphen-joined active scopes
     _LOG_MODES=""
-    [[ $FIX_WIFI     -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}wifi"
-    [[ $FIX_HEALTH   -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}health"
-    [[ $FIX_PROGRAMS -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}programs"
-    [[ $FIX_ERRORS   -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}errors"
+    [[ $FIX_WIFI      -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}wifi"
+    [[ $FIX_HEALTH    -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}health"
+    [[ $FIX_PROGRAMS  -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}programs"
+    [[ $FIX_ERRORS    -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}errors"
+    [[ $FIX_REGISTERS -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}registers"
     [[ "$_LOG_MODES" == "wifi-health-programs-errors" ]] && _LOG_MODES="all"
     LOG_FILE="${LOG_DIR}/fix_${_LOG_MODES}_$(date '+%Y%m%d_%H%M%S').log"
     flog()      { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
@@ -733,7 +737,7 @@ fix)
     ffix_err()  { spin_err  "$*"; flog "ERROR : $*"; }
 
     FIX_COUNT=0
-    flog "=== Run started | wifi=${FIX_WIFI} health=${FIX_HEALTH} programs=${FIX_PROGRAMS} errors=${FIX_ERRORS} ==="
+    flog "=== Run started | wifi=${FIX_WIFI} health=${FIX_HEALTH} programs=${FIX_PROGRAMS} errors=${FIX_ERRORS} registers=${FIX_REGISTERS} ==="
 
     banner "Auto Fix"
     echo ""
@@ -1235,6 +1239,37 @@ SMBC
             ffix_info "plc_reader.py present and readable"
         fi
 
+        echo ""
+    fi
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # REGISTERS — confirm the live PLC register layout and auto-correct the map
+    # ─────────────────────────────────────────────────────────────────────────
+    if [[ $FIX_REGISTERS -eq 1 ]]; then
+        echo -e "  ${B}▸ PLC Registers${NC}"; hr; echo ""
+        flog "=== Register scan ==="
+        # The scanner connects to the PLC, decodes known + candidate registers,
+        # and — if the read weight reads 0 while an item is on the scale —
+        # detects the real register and writes data/register_map.json so the
+        # code self-corrects without a source edit.
+        _REG_OUT=$("${PYTHON}" -c "
+import sys; sys.path.insert(0, '${INSTALL_DIR}')
+import regmap
+changed, _ = regmap.scan(write=True)
+sys.exit(10 if changed else 0)
+" 2>&1)
+        _REG_RC=$?
+        echo "$_REG_OUT"
+        while IFS= read -r _rl; do flog "REG: $_rl"; done <<< "$_REG_OUT"
+        echo ""
+        if [[ $_REG_RC -eq 10 ]]; then
+            ffix_ok "Register map auto-corrected — read weight remapped"
+            # New map takes effect on the reader's next item; restart to apply now.
+            sudo systemctl restart plc_watcher 2>/dev/null || true
+            ffix_info "plc_watcher restarted to apply the new register map"
+        else
+            ffix_info "Register scan complete — no remap needed"
+        fi
         echo ""
     fi
 
@@ -1961,6 +1996,7 @@ help|--help|-h)
     echo "    fix -health                Fix disk, memory, time, dirs"
     echo "    fix -programs              Fix services, packages, queue, unit files"
     echo "    fix -errors                Scan journal, verify RT/permissions/PLC/config"
+    echo "    fix -registers             Confirm live PLC register layout + auto-correct map"
     echo "    logs                       Stream live logs (plc_watcher + plc_web)"
     echo "    queue                      Show SMB pending queue and delivery ledger"
     echo "    selfheal status            Self-healing daemon state + unresolved problems"
