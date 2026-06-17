@@ -59,14 +59,22 @@ BATCH_STATE = os.path.join(_BASE_DIR, "data", "batch_state.json")
 SERIAL_STATE = os.path.join(_BASE_DIR, "data", "serial_state.json")
 
 
-def _next_serial(pallet_no: int) -> int:
-    """Return the next serial for this pallet; reset to 1 on pallet change."""
+def _next_serial(batch_no, pallet_no: int) -> int:
+    """
+    Running item serial within a (batch, pallet).
+
+    Continues from where it left off across a STOP / report / reader restart as
+    long as BOTH the batch number and the pallet number are unchanged. Resets to
+    1 when EITHER changes — i.e. a new pallet OR a new batch starts fresh at
+    0001 (keying on the batch too means a new batch always resets, even if the
+    PLC's pallet counter happens to repeat a number).
+    """
     try:
         with open(SERIAL_STATE) as f:
             st = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         st = {}
-    if st.get("pallet_no") == pallet_no:
+    if st.get("batch_no") == batch_no and st.get("pallet_no") == pallet_no:
         serial = int(st.get("serial", 0)) + 1
     else:
         serial = 1
@@ -74,7 +82,8 @@ def _next_serial(pallet_no: int) -> int:
         os.makedirs(os.path.dirname(SERIAL_STATE), exist_ok=True)
         tmp = SERIAL_STATE + ".tmp"
         with open(tmp, "w") as f:
-            json.dump({"pallet_no": pallet_no, "serial": serial}, f)
+            json.dump({"batch_no": batch_no, "pallet_no": pallet_no,
+                       "serial": serial}, f)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, SERIAL_STATE)
@@ -526,9 +535,9 @@ def main():
                 if not batch_start_dt:
                     batch_start_dt = data.get("datetime", _now_str())
 
-                # Per-pallet running serial (continues across PDFs/restarts
-                # within a pallet, resets to 1 when the pallet changes).
-                serial_no = _next_serial(snap_pallet)
+                # Running serial within (batch, pallet): continues across
+                # PDFs/restarts, resets to 1 on a new pallet OR a new batch.
+                serial_no = _next_serial(data.get("batch_no"), snap_pallet)
 
                 row = {
                     "serial"         : serial_no,
