@@ -113,10 +113,19 @@ def launch_reader_loop(plc):
 
 def recover_interrupted_batch():
     """
-    Power-failure recovery.  plc_reader saves data/batch_state.json after
-    every item; on a clean batch end the file is removed.  If it still
-    exists here, the previous run died mid-batch (power cut, crash, forced
-    reboot) — rebuild the PDF from the on-disk CSV and push it.
+    Power-failure check (NON-finalizing).
+
+    plc_reader saves data/batch_state.json after every item; a clean batch end
+    removes it. If it still exists at boot, the previous run was cut mid-batch
+    (power loss / crash / forced reboot).
+
+    We deliberately DO NOT finalize it here. The interrupted batch + its CSV are
+    left intact so that when the machine next runs, plc_reader can decide:
+      • the SAME batch resumes  → continue appending to the same report
+      • a DIFFERENT batch starts → finalize the interrupted one as a recovered
+                                    report, then begin fresh
+    Only obviously-dead state (inactive, or CSV gone/empty) is cleaned up now —
+    there is nothing to resume from in those cases.
     """
     state_file = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               "data", "batch_state.json")
@@ -133,54 +142,31 @@ def recover_interrupted_batch():
         return
 
     csv_path = state.get("csv_path", "")
-    print(f"[watcher] Unfinished batch detected (power loss / crash) — recovering")
-    print(f"[watcher]   CSV: {csv_path}")
+    if not csv_path or not os.path.exists(csv_path):
+        print("[watcher] Interrupted batch state found but CSV is gone — clearing.")
+        try:
+            os.remove(state_file)
+        except OSError:
+            pass
+        return
+
+    # Count carried-over items for the operator log (best effort).
+    n = 0
     try:
         import csv as _csv
-        from datetime import datetime as _dt
-        from plc_report import build_pdf, PDF_DIR
-        from pdf_push import push_pdf_async
-
-        if not os.path.exists(csv_path):
-            print("[watcher]   CSV no longer exists — nothing to recover.")
-            os.remove(state_file)
-            return
-
         with open(csv_path) as f:
-            rows = list(_csv.DictReader(f))
-        if not rows:
-            print("[watcher]   CSV empty — nothing to recover.")
-            os.remove(csv_path)
-            os.remove(state_file)
-            return
+            n = max(0, sum(1 for _ in _csv.reader(f)) - 1)   # minus header
+    except Exception:
+        pass
 
-        batch_data = state.get("batch_data", {})
-        ts   = _dt.now().strftime("%Y%m%d_%H%M%S")
-        name = f"report_batch{batch_data.get('batch_no', 0)}_{ts}_RECOVERED.pdf"
-        path = os.path.join(PDF_DIR, name)
-        stop_dt = rows[-1].get("datetime", "")
-        build_pdf(batch_data, rows, path,
-                  start_dt=state.get("start_dt", ""), stop_dt=stop_dt)
-        print(f"[watcher]   Recovered {len(rows)} item(s) → {name}")
-        if eventlog:
-            eventlog.log_incident(
-                "batch_recovery", "HEALED",
-                cause="Previous run ended mid-batch (power loss / crash / forced reboot)",
-                action=f"Rebuilt PDF from on-disk CSV ({len(rows)} item(s)) and queued for delivery",
-                result=f"Recovered report {name} — no batch data lost")
-            eventlog.log_report(name, len(rows),
-                                batch_no=batch_data.get("batch_no"), recovered=True)
-        push_pdf_async(path)
-        os.remove(csv_path)
-        os.remove(state_file)
-    except Exception as e:
-        print(f"[watcher]   Recovery failed: {e} — CSV kept for manual review.")
-        if eventlog:
-            eventlog.log_incident(
-                "batch_recovery", "FAILED",
-                cause="Unfinished batch detected after restart",
-                action="Attempted to rebuild PDF from on-disk CSV",
-                result=f"Recovery failed: {e} — CSV kept for manual review")
+    batch_no = (state.get("batch_data") or {}).get("batch_no")
+    print(f"[watcher] Interrupted batch {batch_no} pending ({n} item(s)) — will "
+          f"RESUME if the same batch restarts, else finalize as recovered.")
+    if eventlog:
+        eventlog.log_system(
+            f"Interrupted batch {batch_no} pending after restart "
+            f"({n} item(s)) — awaiting resume-or-new decision at next run",
+            level="warn")
 
 
 def _sd_notify(state: str):

@@ -113,6 +113,158 @@ def _clear_batch_state():
         pass
 
 
+def _load_batch_state():
+    try:
+        with open(BATCH_STATE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+# ── Power-failure continuation ───────────────────────────────────────────────
+# After a power cut the previous run leaves batch_state.json + its CSV intact
+# (the watcher no longer finalizes at boot). When the machine next runs, the
+# reader compares the live PLC batch number with the interrupted one and either
+# RESUMES the same batch (continue the same report) or, if a DIFFERENT batch has
+# started, finalizes the interrupted batch as a recovered report and begins anew.
+
+def _csv_event_rows(csv_path):
+    """Rebuild in-memory event_rows from a session CSV (for resume / recovery)."""
+    rows = []
+    try:
+        with open(csv_path, newline="") as f:
+            for r in csv.DictReader(f):
+                try:
+                    item_no = int(r.get("item_no") or 0)
+                except (TypeError, ValueError):
+                    item_no = 0
+                rows.append({
+                    "serial":         r.get("serial", ""),
+                    "item_no":        item_no,
+                    "pallet_no":      r.get("pallet_no", ""),
+                    "lot_no":         r.get("lot_no", ""),
+                    "datetime":       r.get("datetime", ""),
+                    "product_weight": r.get("product_weight", ""),
+                    "read_weight":    r.get("read_weight", ""),
+                    "status":         r.get("status", ""),
+                    "barcode":        r.get("barcode", ""),
+                })
+    except (FileNotFoundError, OSError):
+        pass
+    return rows
+
+
+def _read_live_batch_no(plc):
+    """Read the batch number the PLC is currently configured for, or None."""
+    try:
+        _rd = lambda dev, n: plc.batchread_wordunits(headdevice=dev, readsize=n)
+        return regmap.read_fields(_rd).get("batch_no")
+    except Exception:
+        return None
+
+
+def _finalize_recovered(state):
+    """Build + push a RECOVERED PDF for an interrupted batch that will NOT be
+    resumed (a different batch has started)."""
+    csv_path = state.get("csv_path", "")
+    if not csv_path or not os.path.exists(csv_path):
+        _clear_batch_state()
+        return
+    rows = _csv_event_rows(csv_path)
+    if not rows:
+        try:
+            os.remove(csv_path)
+        except OSError:
+            pass
+        _clear_batch_state()
+        return
+    batch_data = state.get("batch_data", {})
+    ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = f"report_batch{batch_data.get('batch_no', 0)}_{ts}_RECOVERED.pdf"
+    path = os.path.join(PDF_DIR, name)
+    try:
+        build_pdf(batch_data, rows, path,
+                  start_dt=state.get("start_dt", ""),
+                  stop_dt=rows[-1].get("datetime", ""))
+        print(f"  [recover] finalized interrupted batch → {name} ({len(rows)} items)")
+        eventlog.log_incident(
+            "batch_continuation", "HEALED",
+            cause=f"Power restored on a NEW batch — interrupted batch "
+                  f"{batch_data.get('batch_no')} was not resumed",
+            action=f"Finalized the interrupted batch as a recovered report "
+                   f"({len(rows)} item(s))",
+            result=f"Recovered report {name}; new batch starts fresh")
+        eventlog.log_report(name, len(rows),
+                            batch_no=batch_data.get("batch_no"), recovered=True)
+        push_pdf_async(path)
+        os.remove(csv_path)
+    except Exception as e:
+        print(f"  [recover] finalize failed: {e} — CSV kept for manual review")
+    _clear_batch_state()
+
+
+def _resolve_interrupted_batch(plc):
+    """
+    Decide resume-vs-new after a power cut.
+
+    Returns a dict of restored state to CONTINUE the interrupted batch, or None
+    to start fresh (after finalizing the old batch as a recovered report when a
+    different batch has started).
+    """
+    state = _load_batch_state()
+    if not state or not state.get("active"):
+        return None
+    csv_path = state.get("csv_path", "")
+    if not csv_path or not os.path.exists(csv_path):
+        _clear_batch_state()
+        return None
+
+    saved_batch = (state.get("batch_data") or {}).get("batch_no")
+    live_batch  = _read_live_batch_no(plc)
+    same = (live_batch is not None and saved_batch is not None
+            and str(live_batch) == str(saved_batch))
+
+    if not same:
+        print(f"  [recover] interrupted batch {saved_batch} != live batch "
+              f"{live_batch} — finalizing old batch, starting new")
+        _finalize_recovered(state)
+        return None
+
+    # ── RESUME the same batch — continue the same CSV / report ───────────────
+    event_rows = _csv_event_rows(csv_path)
+    try:
+        f = open(csv_path, "a", newline="")      # append — keep rows + header
+        w = csv.writer(f)
+    except OSError as e:
+        print(f"  [recover] cannot reopen CSV ({e}) — finalizing instead")
+        _finalize_recovered(state)
+        return None
+
+    batch_data = state.get("batch_data", {})
+    pallet     = int(batch_data.get("pallet_no", 0) or 0)
+    print(f"  [recover] RESUMING batch {saved_batch} — {len(event_rows)} item(s) "
+          f"carried over from before the power cut")
+    eventlog.log_incident(
+        "batch_continuation", "HEALED",
+        cause=f"Power restored and the SAME batch {saved_batch} resumed",
+        action=f"Continued the existing report — {len(event_rows)} pre-cut "
+               f"item(s) carried over; new items append to the same batch",
+        result="Single continuous report — no fragmentation")
+    return {
+        "csv_path":       csv_path,
+        "csv_file":       f,
+        "csv_writer":     w,
+        "batch_data":     batch_data,
+        "event_rows":     event_rows,
+        "item_count":     int(state.get("item_count", len(event_rows)) or 0),
+        "accepted":       int(state.get("accepted", 0) or 0),
+        "rejected":       int(state.get("rejected", 0) or 0),
+        "last_pallet":    pallet,
+        "batch_start_dt": state.get("start_dt", ""),
+        "sw_pallet":      pallet or None,
+    }
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def bcd(v: int) -> int:
@@ -315,19 +467,35 @@ def main():
         print(f"CSV log     : {path}")
         return path, f, w
 
-    csv_path, csv_file, csv_writer = open_csv()
+    # Power-failure continuation: resume the same batch if it is restarting,
+    # else finalize the interrupted one and begin fresh.
+    resume = _resolve_interrupted_batch(plc)
+    if resume:
+        csv_path       = resume["csv_path"]
+        csv_file       = resume["csv_file"]
+        csv_writer     = resume["csv_writer"]
+        batch_data     = resume["batch_data"]
+        event_rows     = resume["event_rows"]
+        item_count     = resume["item_count"]
+        accepted       = resume["accepted"]
+        rejected       = resume["rejected"]
+        last_pallet    = resume["last_pallet"]
+        batch_start_dt = resume["batch_start_dt"]
+        sw_pallet      = resume["sw_pallet"]
+    else:
+        csv_path, csv_file, csv_writer = open_csv()
+        batch_data     = {}
+        event_rows     = []
+        item_count     = 0
+        accepted       = 0
+        rejected       = 0
+        last_pallet    = None
+        batch_start_dt = ""
+        sw_pallet      = None
     print("Watching for items...  (Stop button or Ctrl+C ends batch)\n")
 
     prev_m102 = prev_m260 = prev_m262 = prev_m200 = 0
     first_poll  = True
-    batch_data  = {}
-    event_rows  = []
-    item_count  = 0
-    accepted    = 0
-    rejected    = 0
-    last_pallet    = None
-    batch_start_dt = ""
-    sw_pallet   = None
     prev_d3300  = None
     live_w      = 0.0     # last known live weight for kiosk
     target_w    = 0.0     # last known target weight for kiosk

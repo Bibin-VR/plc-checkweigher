@@ -50,6 +50,13 @@ break the priority data-collection task.
   CAUSE / ACTION / RESULT explanation (throttled per-problem).
 - Existing power-failure batch recovery (`batch_state.json`) and SMB
   store-and-forward remain; recovery events now also land in the journal.
+- **Power-cut batch continuation (v1.37+)**: the watcher no longer finalizes
+  an interrupted batch at boot — it leaves `batch_state.json` + its CSV intact.
+  When the machine next runs, `plc_reader` reads the live PLC `batch_no` and
+  decides: **same batch → RESUME** (reopen the CSV in append mode, restore
+  counters/serial/pallet, one continuous report) ; **different/unreadable batch
+  → finalize the interrupted one as a `_RECOVERED` report and start fresh.**
+  See `plc_reader._resolve_interrupted_batch`.
 
 ---
 
