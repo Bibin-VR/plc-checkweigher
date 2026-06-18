@@ -212,8 +212,11 @@ def start_watchdog():
     except (TypeError, ValueError):
         interval = 20.0
 
+    # Signal readiness SYNCHRONOUSLY first (Type=notify) so startup never waits
+    # on thread scheduling, then keep petting the watchdog from the thread.
+    _sd_notify("READY=1")
+
     def _beat():
-        _sd_notify("READY=1")
         while True:
             _sd_notify("WATCHDOG=1")
             time.sleep(interval)

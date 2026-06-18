@@ -6,7 +6,11 @@ Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+# Type=notify guarantees $NOTIFY_SOCKET is passed so the watchdog pings land.
+# The heartbeat thread sends READY=1 immediately (before connect()), so a PLC
+# that is down at boot never delays or fails startup.
+Type=notify
+NotifyAccess=main
 User=pi
 WorkingDirectory=/home/pi/plc_checkweigher
 Environment=PYTHONUNBUFFERED=1
