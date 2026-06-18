@@ -12,9 +12,44 @@ Industrial check-weigher data logger for a **Mitsubishi PLC** line at **Sai Sama
 - Every item that passes the check-weigher triggers a data capture (weight, accept/reject, barcode).
 - At end-of-batch (STOP pressed), a **PDF report** is generated and automatically pushed to a Windows PC on the network via SMB.
 - If the SMB target is offline, reports are **queued persistently** and delivered when it comes back — never re-sent.
-- A **live web dashboard** shows real-time weight, batch stats, and item feed.
+- A **live web dashboard** shows real-time weight, batch stats, and a live **Transmission & Event Log**.
 - A **PDF report viewer** at port 8080 shows all past reports with live auto-refresh.
 - The whole stack runs as **systemd RT services** on a PREEMPT_RT kernel, auto-starting on boot.
+
+---
+
+## Reliability / Persistence (v1.36+)
+
+Built for **months of unattended running** with no single minor failure able to
+break the priority data-collection task.
+
+- **`eventlog.py`** — one durable, append-only `flock`+`fsync` journal
+  (`data/event_journal.jsonl`, mode 0666 so both `pi` and `root` write it).
+  Every item, report, SMB delivery attempt, and auto-fix incident is recorded.
+  Self-rotating (≈4 MB × 3 archives) so it never fills the disk. This is the
+  transmission record AND the OPS-terminal feed source (it replaced the old
+  per-item "item feed").
+- **systemd watchdog** on `plc_watcher`: a heartbeat thread pets
+  `sd_notify(WATCHDOG=1)` (`WatchdogSec=60`); a deadlocked process is
+  hard-restarted. `StartLimitIntervalSec=0` (retries forever),
+  `OOMScoreAdjust=-900` (kernel sacrifices everything else first).
+- **Bounded non-critical services**: `plc_web` / `plc_selfheal` have
+  `MemoryMax` + positive `OOMScoreAdjust`, so a months-long leak there can
+  never starve the reader.
+- **Disk-fill guard** (`selfheal.heal_disk_space`): when free space drops, it
+  vacuums journald, clears scratch/over-cap files, and prunes ONLY delivered +
+  aged (`>120 d`) reports — never an undelivered one.
+- **Backup / restore** (`selfheal.backup_state` / `restore_check`): hourly
+  fsync'd `data/backups/snapshot_latest.tar.gz` of durable config (smb_config,
+  register_map, console_passwd, ledgers). On boot, a missing/corrupt config is
+  auto-restored from the latest snapshot and services bounced. CLI:
+  `plc_checkweigher backup` / `restore`. Transient batch state is never
+  overwritten from an old snapshot.
+- **Auto-fix → SMB**: `selfheal` reports BOTH unresolved faults AND applied
+  auto-fixes to the SMB `health/` folder with a full
+  CAUSE / ACTION / RESULT explanation (throttled per-problem).
+- Existing power-failure batch recovery (`batch_state.json`) and SMB
+  store-and-forward remain; recovery events now also land in the journal.
 
 ---
 

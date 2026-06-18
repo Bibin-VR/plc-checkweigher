@@ -1,6 +1,7 @@
 [Unit]
 Description=PLC Check-Weigher Report Viewer
 After=network.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -12,6 +13,10 @@ Restart=always
 RestartSec=5
 # Flask has no shutdown state to save — kill fast so reboots are never delayed
 TimeoutStopSec=5
+# Bound a months-long leak and make the web UI the first thing the kernel
+# reclaims under memory pressure — never the PLC watcher.
+MemoryMax=300M
+OOMScoreAdjust=300
 StandardOutput=journal
 StandardError=journal
 

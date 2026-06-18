@@ -21,6 +21,7 @@ from pymcprotocol import Type3E
 from plc_report import build_pdf, PDF_DIR
 from pdf_push import push_pdf_sync
 import regmap
+import eventlog
 
 PLC_IP            = "192.168.3.250"
 PLC_PORT          = 1025
@@ -283,6 +284,8 @@ def gen_batch_pdf(batch_data: dict, event_rows: list,
     try:
         build_pdf(batch_data, event_rows, path, start_dt=start_dt, stop_dt=stop_dt)
         print(f"  [PDF] {len(event_rows)} items → {path}")
+        eventlog.log_report(name, len(event_rows),
+                            batch_no=batch_data.get("batch_no"))
         push_pdf_sync(path)    # blocks until done — safe at batch end, avoids race with process exit
         return True
     except Exception as e:
@@ -575,6 +578,18 @@ def main():
 
                 display(data, item_count, reason, accepted, rejected)
                 last_status = reason
+
+                # Durable transmission journal — the OPS terminal's live feed
+                # and the restore reference both read this.
+                eventlog.log_item(
+                    item_no=item_count, status=reason,
+                    read_weight=data.get("read_weight", ""),
+                    target=data.get("product_weight", ""),
+                    batch_no=data.get("batch_no"),
+                    pallet_no=snap_pallet,
+                    barcode=data.get("barcode", ""),
+                    serial=serial_no,
+                )
 
                 try:
                     pw_f = float(data.get("product_weight", 0) or 0)

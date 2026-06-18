@@ -2,6 +2,8 @@
 Description=PLC Check-Weigher Start Watcher
 After=network-online.target time-sync.target
 Wants=network-online.target
+# Never give up restarting the priority task — even after months of churn.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -12,6 +14,12 @@ ExecStart=/home/pi/plc_env/bin/python3 -u /home/pi/plc_checkweigher/plc_watcher.
 Restart=always
 RestartSec=5
 TimeoutStopSec=10
+# Hardware-style watchdog: the watcher pets WATCHDOG=1 from a heartbeat
+# thread. If the process ever deadlocks, systemd hard-restarts it.
+WatchdogSec=60
+# Shield the priority task from the OOM killer — the kernel sacrifices
+# every other process before this one.
+OOMScoreAdjust=-900
 StandardOutput=journal
 StandardError=journal
 CPUSchedulingPolicy=fifo

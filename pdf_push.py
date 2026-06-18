@@ -33,6 +33,19 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text      import MIMEText
 from email                import encoders
 
+try:
+    import eventlog
+except Exception:                       # journal optional — never block delivery
+    eventlog = None
+
+
+def _journal_delivery(filename, ok, detail=""):
+    if eventlog is not None:
+        try:
+            eventlog.log_delivery(filename, ok, detail=detail, host=SMB_HOST)
+        except Exception:
+            pass
+
 
 # ── Email ─────────────────────────────────────────────────────────────────────
 EMAIL_ENABLED  = False
@@ -265,19 +278,24 @@ def _try_smb(path: str):
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
         if result.returncode == 0:
             print(f"  [SMB] ✓ {filename}  →  \\\\{SMB_HOST}\\{SMB_SHARE}\\{dest}")
+            _journal_delivery(filename, True)
             return True
         lines = (result.stderr or result.stdout).strip().splitlines()
         err   = lines[-1] if lines else f"exit {result.returncode}"
         print(f"  [SMB] ✗ {filename}: {err}")
+        _journal_delivery(filename, False, err)
         return False
     except FileNotFoundError:
         print("  [SMB] ✗ smbclient not found — run: sudo apt install samba-client")
+        _journal_delivery(filename, False, "smbclient not installed")
         return False
     except subprocess.TimeoutExpired:
         print(f"  [SMB] ✗ {filename}: timeout (host unreachable?)")
+        _journal_delivery(filename, False, "timeout (host unreachable?)")
         return False
     except Exception as e:
         print(f"  [SMB] ✗ {filename}: {e}")
+        _journal_delivery(filename, False, str(e))
         return False
 
 

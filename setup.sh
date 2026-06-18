@@ -176,7 +176,7 @@ install_cli() {
     cat > /tmp/010_plc-web-fix << 'EOF'
 # Web dashboard maintenance terminal — allows the locked, root-owned CLI
 # to run whitelisted maintenance subcommands from plc_web (User=pi).
-pi ALL=(root) NOPASSWD: /usr/local/bin/plc_checkweigher fix, /usr/local/bin/plc_checkweigher fix *, /usr/local/bin/plc_checkweigher status, /usr/local/bin/plc_checkweigher restart, /usr/local/bin/plc_checkweigher start, /usr/local/bin/plc_checkweigher stop, /usr/local/bin/plc_checkweigher update
+pi ALL=(root) NOPASSWD: /usr/local/bin/plc_checkweigher fix, /usr/local/bin/plc_checkweigher fix *, /usr/local/bin/plc_checkweigher status, /usr/local/bin/plc_checkweigher restart, /usr/local/bin/plc_checkweigher start, /usr/local/bin/plc_checkweigher stop, /usr/local/bin/plc_checkweigher update, /usr/local/bin/plc_checkweigher restore
 EOF
     if visudo -c -f /tmp/010_plc-web-fix &>/dev/null; then
         cp /tmp/010_plc-web-fix /etc/sudoers.d/010_plc-web-fix

@@ -12,10 +12,17 @@ reconnects and waits for the next Start press.
 
 import json
 import os
+import socket
 import subprocess
 import sys
+import threading
 import time
 from pymcprotocol import Type3E
+
+try:
+    import eventlog
+except Exception:                 # journal optional — never block the watcher
+    eventlog = None
 
 PLC_IP            = "192.168.3.250"
 _READER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plc_reader.py")
@@ -155,11 +162,65 @@ def recover_interrupted_batch():
         build_pdf(batch_data, rows, path,
                   start_dt=state.get("start_dt", ""), stop_dt=stop_dt)
         print(f"[watcher]   Recovered {len(rows)} item(s) → {name}")
+        if eventlog:
+            eventlog.log_incident(
+                "batch_recovery", "HEALED",
+                cause="Previous run ended mid-batch (power loss / crash / forced reboot)",
+                action=f"Rebuilt PDF from on-disk CSV ({len(rows)} item(s)) and queued for delivery",
+                result=f"Recovered report {name} — no batch data lost")
+            eventlog.log_report(name, len(rows),
+                                batch_no=batch_data.get("batch_no"), recovered=True)
         push_pdf_async(path)
         os.remove(csv_path)
         os.remove(state_file)
     except Exception as e:
         print(f"[watcher]   Recovery failed: {e} — CSV kept for manual review.")
+        if eventlog:
+            eventlog.log_incident(
+                "batch_recovery", "FAILED",
+                cause="Unfinished batch detected after restart",
+                action="Attempted to rebuild PDF from on-disk CSV",
+                result=f"Recovery failed: {e} — CSV kept for manual review")
+
+
+def _sd_notify(state: str):
+    """Send a notification to systemd via $NOTIFY_SOCKET. No-op if unset."""
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    try:
+        if addr.startswith("@"):          # abstract namespace
+            addr = "\0" + addr[1:]
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        s.connect(addr)
+        s.sendall(state.encode())
+        s.close()
+    except Exception:
+        pass
+
+
+def start_watchdog():
+    """
+    Pet systemd's WatchdogSec from a daemon thread. The watchdog is armed the
+    instant the process starts — before connect() — so a PLC that is down at
+    boot can never be mistaken for a hung watcher. If the *process itself*
+    ever deadlocks, the pings stop and systemd hard-restarts it.
+    """
+    usec = os.environ.get("WATCHDOG_USEC")
+    try:
+        interval = max(2.0, (int(usec) / 1_000_000.0) / 2.0) if usec else 20.0
+    except (TypeError, ValueError):
+        interval = 20.0
+
+    def _beat():
+        _sd_notify("READY=1")
+        while True:
+            _sd_notify("WATCHDOG=1")
+            time.sleep(interval)
+
+    threading.Thread(target=_beat, daemon=True, name="sd-watchdog").start()
+    if os.environ.get("NOTIFY_SOCKET"):
+        print(f"[watcher] systemd watchdog armed — ping every {interval:.0f}s")
 
 
 def start_smb_retry_worker():
@@ -183,6 +244,9 @@ def start_smb_retry_worker():
 
 def main():
     print("[watcher] PLC Start Watcher started.")
+    start_watchdog()               # arm the watchdog before anything can block
+    if eventlog:
+        eventlog.log_system("Watcher started — system online", level="ok")
     # Write an initial live-state file IMMEDIATELY so /tmp/plc_live.json always
     # exists while the watcher process is alive. /tmp is cleared on every boot,
     # and recover_interrupted_batch() + connect() below can take several seconds

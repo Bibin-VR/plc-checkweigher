@@ -12,10 +12,20 @@ import re
 import secrets
 import signal
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
 from flask import Flask, Response, jsonify, request, send_from_directory, abort, render_template, stream_with_context
+
+# The transmission/event journal module lives one level up (project root).
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+try:
+    import eventlog
+except Exception:                       # pragma: no cover - journal optional
+    eventlog = None
 
 LIVE_STATE_PATH = "/tmp/plc_live.json"
 
@@ -171,6 +181,60 @@ def events():
                         pass
                 known = current
                 if tick % 15 == 0:          # keepalive every 30 s
+                    yield ": keepalive\n\n"
+            except GeneratorExit:
+                return
+            except Exception:
+                pass
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Transmission & Event Log — the durable journal that replaces the item feed.
+# Records every item, report, SMB delivery attempt, and auto-fix incident.
+# /api/journal     → recent entries (initial load)
+# /journal-events  → SSE stream that pushes new entries as they are appended
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/journal")
+def api_journal():
+    if eventlog is None:
+        return jsonify([])
+    try:
+        n = max(1, min(500, int(request.args.get("n", 120))))
+    except (TypeError, ValueError):
+        n = 120
+    return jsonify(eventlog.tail(n))
+
+
+@app.route("/journal-events")
+def journal_events():
+    """SSE: emits each new journal entry as it is appended to the file."""
+    def generate():
+        if eventlog is None:
+            yield ": journal unavailable\n\n"
+            return
+        # Prime with the last timestamp already on disk so we only stream NEW
+        # events from here on (the client loaded history via /api/journal).
+        seen = eventlog.tail(1)
+        last_ts = seen[-1]["ts"] if seen else 0.0
+        yield ": connected\n\n"
+        tick = 0
+        while True:
+            time.sleep(0.4)
+            tick += 1
+            try:
+                fresh = [e for e in eventlog.tail(60)
+                         if e.get("ts", 0) > last_ts]
+                for e in fresh:
+                    last_ts = e["ts"]
+                    yield f"event: entry\ndata: {json.dumps(e)}\n\n"
+                if not fresh and tick % 25 == 0:    # keepalive ~10 s
                     yield ": keepalive\n\n"
             except GeneratorExit:
                 return
@@ -350,10 +414,10 @@ def _build_console_cmd(raw: str):
     # root-needed subcommands → locked CLI via scoped NOPASSWD rule
     if sub == "fix" and all(a in _FIX_FLAGS for a in args):
         return (["sudo", "-n", _CLI, "fix", *args], echo, None)
-    if sub in ("status", "restart", "start", "stop", "update") and not args:
+    if sub in ("status", "restart", "start", "stop", "update", "restore") and not args:
         return (["sudo", "-n", _CLI, sub], echo, None)
     # safe to run directly as pi
-    if sub in ("queue", "help", "push-test") and not args:
+    if sub in ("queue", "help", "push-test", "backup") and not args:
         return ([_CLI, sub], echo, None)
     if sub in ("display", "hotspot") and args == ["status"]:
         return ([_CLI, sub, "status"], echo, None)

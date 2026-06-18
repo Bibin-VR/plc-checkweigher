@@ -2,6 +2,7 @@
 Description=PLC Check-Weigher Self-Healing Daemon
 After=network.target plc_watcher.service plc_web.service
 Wants=plc_watcher.service plc_web.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -17,6 +18,9 @@ RestartSec=10
 Nice=10
 CPUAffinity=0 1 2
 IOSchedulingClass=idle
+# Bound memory and yield to the priority task under pressure.
+MemoryMax=200M
+OOMScoreAdjust=250
 StandardOutput=journal
 StandardError=journal
 

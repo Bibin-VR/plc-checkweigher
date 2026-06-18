@@ -30,14 +30,21 @@ SMB host is down, they are kept locally and pushed on a later cycle.
 """
 
 import ast
+import glob
 import json
 import os
 import pwd
 import shutil
 import socket
 import subprocess
+import tarfile
 import time
 from datetime import datetime
+
+try:
+    import eventlog
+except Exception:                 # journal optional
+    eventlog = None
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR    = os.path.join(BASE_DIR, "data")
@@ -49,6 +56,8 @@ SMB_CFG     = os.path.join(DATA_DIR, "smb_config.py")
 QUEUE_FILE  = os.path.join(DATA_DIR, "delivery_queue.json")
 LEDGER_FILE = os.path.join(DATA_DIR, "delivery_sent.log")
 
+BACKUP_DIR  = os.path.join(DATA_DIR, "backups")
+
 PLC_IP   = "192.168.3.250"
 PLC_PORT = 1025
 
@@ -56,6 +65,35 @@ CYCLE           = int(os.environ.get("SELFHEAL_CYCLE",    "120"))   # seconds be
 REPORT_THROTTLE = int(os.environ.get("SELFHEAL_THROTTLE", "3600"))  # min seconds between repeat reports
 LIVE_STALE_SEC  = 15
 SERVICES        = ["plc_watcher", "plc_web"]
+
+# ── Months-of-uptime guards ──────────────────────────────────────────────────
+# Disk-fill is the number-one killer of long-running embedded systems. The
+# guard below prunes only delivered + aged reports and over-cap logs, and only
+# when space is genuinely low — so it can never delete an undelivered report.
+DISK_MOUNT       = "/"
+DISK_MIN_FREE_MB = int(os.environ.get("SELFHEAL_MIN_FREE_MB", "800"))
+DISK_MAX_PCT     = int(os.environ.get("SELFHEAL_MAX_PCT",     "92"))
+PDF_MIN_AGE_DAYS = int(os.environ.get("SELFHEAL_PDF_AGE_DAYS", "120"))  # only prune older
+JOURNALD_VACUUM  = "48M"
+
+# ── Backup / restore ─────────────────────────────────────────────────────────
+BACKUP_EVERY     = int(os.environ.get("SELFHEAL_BACKUP_EVERY", "3600"))  # 1 h
+BACKUP_KEEP      = int(os.environ.get("SELFHEAL_BACKUP_KEEP",  "12"))
+# Configuration/identity files that must survive a wipe (restored if lost).
+# Live/transient state (batch_state, serial_state, live JSON) is intentionally
+# NOT restored from an old snapshot — only durable configuration is.
+CONFIG_FILES = [
+    os.path.join(DATA_DIR, "smb_config.py"),
+    os.path.join(BASE_DIR, "smb_config.py"),
+    os.path.join(DATA_DIR, "register_map.json"),
+    os.path.join(DATA_DIR, "console_passwd"),
+]
+# Everything captured in a snapshot (config + ledger + journal for reference).
+SNAPSHOT_FILES = CONFIG_FILES + [
+    os.path.join(DATA_DIR, "delivery_sent.log"),
+    os.path.join(DATA_DIR, "delivery_queue.json"),
+    os.path.join(DATA_DIR, "serial_state.json"),
+]
 
 
 def log(msg: str):
@@ -228,11 +266,265 @@ def heal_smb_config():
     return None
 
 
+# ── disk-fill guard — the months-of-uptime safeguard ─────────────────────────
+
+def _disk_free_mb():
+    try:
+        st = os.statvfs(DISK_MOUNT)
+        free_mb = (st.f_bavail * st.f_frsize) / (1024 * 1024)
+        total   = st.f_blocks * st.f_frsize
+        used    = total - (st.f_bfree * st.f_frsize)
+        pct     = (used / total * 100) if total else 0
+        return free_mb, pct
+    except Exception:
+        return 1e9, 0   # unknown → treat as healthy
+
+
+def _delivered_set() -> set:
+    try:
+        with open(LEDGER_FILE) as f:
+            return {ln.strip() for ln in f if ln.strip()}
+    except Exception:
+        return set()
+
+
+def heal_disk_space():
+    """
+    When free space drops below the guard, reclaim it WITHOUT ever risking an
+    undelivered report:
+      • vacuum journald to a hard cap
+      • delete *.broken.* scratch files and over-cap health reports
+      • delete reports older than PDF_MIN_AGE_DAYS that are confirmed delivered
+        (present in the sent ledger) — oldest first, until space recovers
+    Returns a HEALED note describing exactly what was freed, or None if healthy.
+    """
+    free_mb, pct = _disk_free_mb()
+    if free_mb >= DISK_MIN_FREE_MB and pct < DISK_MAX_PCT:
+        return None
+
+    log(f"disk low: {free_mb:.0f} MB free ({pct:.0f}% used) — reclaiming space")
+    freed_notes = []
+
+    # 1) journald
+    rc, _ = _run(["journalctl", f"--vacuum-size={JOURNALD_VACUUM}"], timeout=40)
+    if rc == 0:
+        freed_notes.append(f"journald vacuumed to {JOURNALD_VACUUM}")
+
+    # 2) scratch + over-cap health reports
+    removed = 0
+    for pat in (os.path.join(DATA_DIR, "*.broken.*"),):
+        for p in glob.glob(pat):
+            try:
+                os.remove(p); removed += 1
+            except OSError:
+                pass
+    try:
+        hreports = sorted(glob.glob(os.path.join(HEALTH_DIR, "health_*.txt")),
+                          key=os.path.getmtime)
+        for p in hreports[:-200]:        # keep newest 200
+            try:
+                os.remove(p); removed += 1
+            except OSError:
+                pass
+    except Exception:
+        pass
+    if removed:
+        freed_notes.append(f"removed {removed} scratch/old-report file(s)")
+
+    # 3) aged + delivered PDFs, oldest first, until space recovers
+    delivered = _delivered_set()
+    cutoff    = time.time() - PDF_MIN_AGE_DAYS * 86400
+    pruned    = 0
+    try:
+        pdfs = sorted(
+            (os.path.join(REPORTS_DIR, f) for f in os.listdir(REPORTS_DIR)
+             if f.lower().endswith(".pdf")),
+            key=os.path.getmtime,
+        )
+    except OSError:
+        pdfs = []
+    for p in pdfs:
+        free_mb, pct = _disk_free_mb()
+        if free_mb >= DISK_MIN_FREE_MB * 1.5 and pct < DISK_MAX_PCT - 3:
+            break                        # comfortable headroom restored
+        name = os.path.basename(p)
+        try:
+            if os.path.getmtime(p) > cutoff:
+                continue                 # too recent to prune
+        except OSError:
+            continue
+        if name not in delivered:
+            continue                     # never delete an undelivered report
+        try:
+            os.remove(p); pruned += 1
+        except OSError:
+            pass
+    if pruned:
+        freed_notes.append(f"pruned {pruned} delivered report(s) older than "
+                           f"{PDF_MIN_AGE_DAYS}d")
+
+    free_mb, pct = _disk_free_mb()
+    detail = (f"low disk reclaimed — {free_mb:.0f} MB free now ({pct:.0f}% used); "
+              + "; ".join(freed_notes) if freed_notes
+              else f"disk low ({free_mb:.0f} MB free) but nothing safe to prune")
+    status = "HEALED" if (free_mb >= DISK_MIN_FREE_MB and freed_notes) else "FAILED"
+    return ("disk_space", status, detail)
+
+
 HEALERS = [
     heal_data_dir, heal_queue_files,
     heal_watcher, heal_web, heal_live_state,
     heal_networkmanager, heal_smb_config,
+    heal_disk_space,
 ]
+
+
+# ── backup / restore — survive a wipe or corrupted config ─────────────────────
+
+def backup_state():
+    """
+    Atomically snapshot durable configuration into data/backups/. fsync'd and
+    renamed into place so a power loss mid-write never leaves a torn archive.
+    Keeps the newest BACKUP_KEEP timestamped snapshots plus snapshot_latest.
+    """
+    try:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        _chown_pi(BACKUP_DIR)
+    except Exception as e:
+        log(f"backup: cannot create {BACKUP_DIR}: {e}")
+        return None
+
+    present = [p for p in SNAPSHOT_FILES if os.path.exists(p)]
+    if not present:
+        return None
+
+    ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = f"snapshot_{ts}.tar.gz"
+    dest = os.path.join(BACKUP_DIR, name)
+    tmp  = dest + ".tmp"
+    manifest = {
+        "host": _hostname(),
+        "created": ts,
+        "files": [os.path.relpath(p, BASE_DIR) for p in present],
+    }
+    try:
+        with tarfile.open(tmp, "w:gz") as tar:
+            for p in present:
+                tar.add(p, arcname=os.path.relpath(p, BASE_DIR))
+            mtmp = os.path.join(BACKUP_DIR, ".manifest.json")
+            with open(mtmp, "w") as mf:
+                json.dump(manifest, mf, indent=2)
+            tar.add(mtmp, arcname="MANIFEST.json")
+            try:
+                os.remove(mtmp)
+            except OSError:
+                pass
+        with open(tmp, "rb") as f:
+            os.fsync(f.fileno())
+        os.replace(tmp, dest)
+        _chown_pi(dest)
+        shutil.copy2(dest, os.path.join(BACKUP_DIR, "snapshot_latest.tar.gz"))
+        _chown_pi(os.path.join(BACKUP_DIR, "snapshot_latest.tar.gz"))
+    except Exception as e:
+        log(f"backup failed: {e}")
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return None
+
+    # prune old snapshots
+    try:
+        snaps = sorted(glob.glob(os.path.join(BACKUP_DIR, "snapshot_2*.tar.gz")),
+                       key=os.path.getmtime)
+        for old in snaps[:-BACKUP_KEEP]:
+            os.remove(old)
+    except Exception:
+        pass
+
+    log(f"backup written: {name} ({len(present)} config file(s))")
+    if eventlog:
+        eventlog.log_system(f"State backup written: {name} "
+                            f"({len(present)} config file(s))", level="info")
+    return dest
+
+
+def _latest_snapshot():
+    p = os.path.join(BACKUP_DIR, "snapshot_latest.tar.gz")
+    return p if os.path.exists(p) else None
+
+
+def _config_intact(path) -> bool:
+    """True if a config file is present AND parses (so corruption counts as lost)."""
+    if not os.path.exists(path):
+        return False
+    try:
+        if path.endswith(".py"):
+            ast.parse(open(path).read())
+        elif path.endswith(".json"):
+            with open(path) as f:
+                json.load(f)
+        else:
+            os.path.getsize(path)
+    except Exception:
+        return False
+    return True
+
+
+def restore_check():
+    """
+    On startup (and every cycle, cheaply): if a durable config file is missing
+    or corrupt and a snapshot exists, restore just that file from the latest
+    snapshot. Returns a (key, status, detail) incident if it acted, else None.
+    """
+    snap = _latest_snapshot()
+    # register_map.json is optional (built-in fallback exists); only treat
+    # smb_config.py and console_passwd as must-restore if a backup has them.
+    critical = [SMB_CFG, os.path.join(BASE_DIR, "smb_config.py"),
+                os.path.join(DATA_DIR, "console_passwd"),
+                os.path.join(DATA_DIR, "register_map.json")]
+    lost = [p for p in critical
+            if os.path.exists(os.path.dirname(p)) and not _config_intact(p)
+            and _snapshot_has(snap, p)]
+    if not snap or not lost:
+        return None
+
+    restored = []
+    try:
+        with tarfile.open(snap, "r:gz") as tar:
+            members = {m.name: m for m in tar.getmembers()}
+            for p in lost:
+                arc = os.path.relpath(p, BASE_DIR)
+                if arc not in members:
+                    continue
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                with tar.extractfile(members[arc]) as src, open(p, "wb") as out:
+                    out.write(src.read())
+                _chown_pi(p)
+                restored.append(os.path.basename(p))
+    except Exception as e:
+        return ("config_restore", "FAILED",
+                f"config loss detected but restore failed: {e}")
+
+    if not restored:
+        return None
+    # config changed under the running services — bounce them to reload it
+    _run(["systemctl", "restart", "plc_watcher"], timeout=40)
+    _run(["systemctl", "restart", "plc_web"], timeout=40)
+    return ("config_restore", "HEALED",
+            "restored lost/corrupt config from last snapshot: "
+            + ", ".join(restored) + " (services restarted)")
+
+
+def _snapshot_has(snap, path) -> bool:
+    if not snap:
+        return False
+    try:
+        arc = os.path.relpath(path, BASE_DIR)
+        with tarfile.open(snap, "r:gz") as tar:
+            return arc in tar.getnames()
+    except Exception:
+        return False
 
 
 # ── environment detectors — context only, never trigger a report by themselves ─
@@ -308,7 +600,7 @@ def _hostname():
 def _build_report(healed, failed, env) -> str:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines = [
-        "PLC Check-Weigher — Self-Heal Health Report",
+        "PLC Check-Weigher — System Health & Auto-Fix Report",
         "=" * 52,
         f"Host : {_hostname()}",
         f"Time : {ts}",
@@ -317,13 +609,15 @@ def _build_report(healed, failed, env) -> str:
     ]
     if failed:
         for k, d in failed:
-            lines.append(f"  [FAIL] {k}: {d}")
+            lines.append(f"  [FAIL] {k}")
+            lines.append(f"         CAUSE/DETAIL : {d}")
     else:
         lines.append("  (none)")
-    lines += ["", "AUTO-HEALED THIS CYCLE:"]
+    lines += ["", "AUTO-FIXES APPLIED THIS CYCLE (cause → action → result):"]
     if healed:
         for k, d in healed:
-            lines.append(f"  [HEALED] {k}: {d}")
+            lines.append(f"  [FIXED] {k}")
+            lines.append(f"         EXPLANATION  : {d}")
     else:
         lines.append("  (none)")
     lines += ["", "ENVIRONMENT:"]
@@ -371,19 +665,32 @@ def _push_health_files() -> bool:
 
 
 def maybe_report(healed, failed, env):
+    """
+    Write + push a health/auto-fix report to SMB when something noteworthy
+    happened this cycle — EITHER an unresolved problem OR an auto-fix that was
+    applied. Each is throttled per-key so a flapping fault can't spam the share,
+    yet every distinct incident (and its fix status) reaches the report PC with
+    a full explanation of the cause.
+    """
     state = load_state()
     now   = time.time()
-    reported = state.get("reported", {})
-    cur = {k for k, _ in failed}
+    reported        = state.get("reported", {})         # unresolved-fault markers
+    healed_reported = state.get("healed_reported", {})  # auto-fix markers
 
-    # Drop markers for problems that have cleared (so a recurrence reports again)
+    failed_keys = {k for k, _ in failed}
+    healed_keys = {k for k, _ in healed}
+
+    # Drop markers for faults that have cleared (so a recurrence reports again).
     for k in list(reported):
-        if k not in cur:
+        if k not in failed_keys:
             reported.pop(k, None)
 
-    due = any((now - reported.get(k, 0)) >= REPORT_THROTTLE for k in cur)
+    failed_due = any((now - reported.get(k, 0))        >= REPORT_THROTTLE
+                     for k in failed_keys)
+    healed_due = any((now - healed_reported.get(k, 0)) >= REPORT_THROTTLE
+                     for k in healed_keys)
 
-    if cur and due:
+    if (failed_keys and failed_due) or (healed_keys and healed_due):
         os.makedirs(HEALTH_DIR, exist_ok=True)
         _chown_pi(HEALTH_DIR)
         name  = f"health_{_hostname()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
@@ -392,14 +699,18 @@ def maybe_report(healed, failed, env):
             with open(local, "w") as f:
                 f.write(_build_report(healed, failed, env))
             _chown_pi(local)
-            log(f"unresolved problems — wrote health report {name}")
+            tag = "unresolved problem(s)" if failed_keys else "auto-fix(es) applied"
+            log(f"{tag} — wrote health/auto-fix report {name}")
         except Exception as e:
             log(f"could not write health report: {e}")
-        for k in cur:
+        for k in failed_keys:
             reported[k] = now
+        for k in healed_keys:
+            healed_reported[k] = now
 
-    state["reported"]   = reported
-    state["last_cycle"] = now
+    state["reported"]        = reported
+    state["healed_reported"] = healed_reported
+    state["last_cycle"]      = now
     save_state(state)
 
     # Always try to flush any undelivered health reports (store-and-forward)
@@ -411,8 +722,35 @@ def maybe_report(healed, failed, env):
 
 # ── main loop ─────────────────────────────────────────────────────────────────
 
+def _record_incident(healed, failed, res):
+    """Sort one (key, status, detail) result into the healed/failed lists and
+    mirror it into the durable event journal as an incident."""
+    key, status, detail = res
+    if status == "HEALED":
+        healed.append((key, detail)); log(f"HEALED  {key}: {detail}")
+    else:
+        failed.append((key, detail)); log(f"FAILED  {key}: {detail}")
+    if eventlog:
+        try:
+            eventlog.log_incident(key, status, cause=detail,
+                                  action="auto-remediation", result=status)
+        except Exception:
+            pass
+
+
 def run_cycle():
     healed, failed = [], []
+
+    # Restore lost/corrupt config from the last snapshot BEFORE anything else,
+    # so service checks below act on good configuration.
+    try:
+        res = restore_check()
+        if res:
+            _record_incident(healed, failed, res)
+    except Exception as e:
+        _record_incident(healed, failed,
+                         ("config_restore", "FAILED", f"restore_check crashed: {e}"))
+
     for fn in HEALERS:
         try:
             res = fn()
@@ -421,17 +759,25 @@ def run_cycle():
                    f"self-heal remedy crashed: {e}")
         if not res:
             continue
-        key, status, detail = res
-        if status == "HEALED":
-            healed.append((key, detail)); log(f"HEALED  {key}: {detail}")
-        else:
-            failed.append((key, detail)); log(f"FAILED  {key}: {detail}")
+        _record_incident(healed, failed, res)
     env = []
     try:
         env = detect_env()
     except Exception as e:
         log(f"env detect error: {e}")
     return healed, failed, env
+
+
+def _maybe_backup():
+    """Take a config snapshot at most once per BACKUP_EVERY seconds."""
+    state = load_state()
+    last  = state.get("last_backup", 0)
+    if (time.time() - last) < BACKUP_EVERY and _latest_snapshot():
+        return
+    if backup_state():
+        state = load_state()          # re-read; backup_state may touch nothing else
+        state["last_backup"] = time.time()
+        save_state(state)
 
 
 def main():
@@ -447,6 +793,7 @@ def main():
             if healed or failed:
                 log(f"cycle complete — {len(healed)} healed, {len(failed)} unresolved")
             maybe_report(healed, failed, env)
+            _maybe_backup()
         except Exception as e:
             log(f"cycle error: {e}")
         time.sleep(CYCLE)

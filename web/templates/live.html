@@ -479,36 +479,60 @@
       letter-spacing: .02em;
     }
 
-    /* ── ITEM FEED — dense telemetry table ── */
-    .items-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
+    /* ── TRANSMISSION & EVENT LOG — durable journal stream ── */
+    .log-list {
+      max-height: 460px;
+      overflow-y: auto;
+      font-size: 12.5px;
       font-variant-numeric: tabular-nums;
-    }
-    .items-table th {
-      text-align: left;
-      padding: 7px 10px;
-      color: var(--faint);
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .2em;
-      border-bottom: 1px solid var(--line-2);
+      border: 1px solid var(--line);
       background: var(--sub);
     }
-    .items-table td {
-      padding: 7px 10px;
+    .log-row {
+      display: grid;
+      grid-template-columns: 92px 86px 1fr auto;
+      gap: 12px;
+      align-items: baseline;
+      padding: 6px 12px;
       border-bottom: 1px solid var(--line);
       color: var(--dim);
     }
-    .items-table td strong { color: var(--fg); font-weight: 700; }
-    .items-table tr:last-child td { border-bottom: none; }
-    .items-table tr.new-row td { animation: row-flash .6s steps(3); }
+    .log-row:last-child { border-bottom: none; }
+    .log-row.flash { animation: row-flash .7s steps(3); }
     @keyframes row-flash {
       from { background: rgba(234,234,234,.12); }
       to   { background: transparent; }
     }
+    .log-time { color: var(--faint); font-size: 11px; white-space: nowrap; }
+    .log-tag {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--faint);
+      white-space: nowrap;
+    }
+    .log-tag::before { content: "["; color: var(--line-2); }
+    .log-tag::after  { content: "]"; color: var(--line-2); }
+    .log-msg {
+      color: var(--fg);
+      word-break: break-word;
+      letter-spacing: .01em;
+    }
+    .log-flag {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      white-space: nowrap;
+      color: var(--faint);
+    }
+    /* level colouring */
+    .log-row.ok    .log-msg, .log-row.ok    .log-flag { color: var(--grn); }
+    .log-row.error .log-msg, .log-row.error .log-flag { color: var(--red); }
+    .log-row.warn  .log-flag { color: #FFB000; }
+    .log-row.warn  .log-msg  { color: var(--fg); }
+    .log-row.ok    .log-tag  { color: var(--grn); }
+    .log-row.error .log-tag  { color: var(--red); }
 
     /* status flag — bracketed, no pill geometry */
     .pill {
@@ -689,25 +713,13 @@
     </div>
   </div>
 
-  <!-- item feed -->
+  <!-- transmission & event log — durable journal: items, reports, SMB
+       deliveries, and auto-fix incidents, newest first -->
   <div class="card">
-    <div class="card-title">Item Feed</div>
-    <div id="items-wrap">
-      <div class="empty-msg" id="empty-msg">Awaiting items</div>
-      <table class="items-table" id="items-table" style="display:none">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Time</th>
-            <th>Read Wt</th>
-            <th>Target</th>
-            <th>Status</th>
-            <th>Barcode</th>
-            <th>Pallet</th>
-          </tr>
-        </thead>
-        <tbody id="items-body"></tbody>
-      </table>
+    <div class="card-title">Transmission &amp; Event Log</div>
+    <div id="log-wrap">
+      <div class="empty-msg" id="log-empty">Awaiting events</div>
+      <div class="log-list" id="log-list" style="display:none"></div>
     </div>
   </div>
 
@@ -759,8 +771,8 @@
 </div>
 
 <script>
-  const MAX_ROWS = 30;
-  let recentItems = [];
+  const MAX_LOG = 220;        // ring buffer of rendered log rows
+  let logRows = [];           // newest first
 
   /* ── element refs ── */
   const elDot      = document.getElementById('plc-dot');
@@ -783,9 +795,8 @@
   const elLot      = document.getElementById('i-lot');
   const elOperator = document.getElementById('i-operator');
   const elIBadge   = document.getElementById('i-machine');
-  const elEmpty    = document.getElementById('empty-msg');
-  const elTable    = document.getElementById('items-table');
-  const elBody     = document.getElementById('items-body');
+  const elLogEmpty = document.getElementById('log-empty');
+  const elLogList  = document.getElementById('log-list');
 
   function pad(n, w) { return String(n).padStart(w, '0'); }
 
@@ -883,49 +894,79 @@
     elIBadge.textContent   = machine;
   }
 
-  function addItemRow(ev, flash) {
-    const status = (ev.status || '').toUpperCase();
-    const ok     = status === 'ACCEPT';
-    const dt     = (ev.datetime || '').replace(/\s+/, ' ');
-    const timePart = dt.split(' ').pop() || '—';
+  /* ── Transmission & Event Log ──
+     Renders the durable journal (items, reports, SMB deliveries, auto-fix
+     incidents). Source of truth is /api/journal + /journal-events SSE. */
+  const KIND_TAG = {
+    item: 'ITEM', report: 'REPORT', delivery: 'SMB',
+    incident: 'FIX', system: 'SYS',
+  };
 
-    const row = {
-      item_no : ev.item_no,
-      time    : timePart,
-      weight  : ev.read_weight || fmtWeight(ev.weight),
-      target  : ev.product_weight || '—',
-      status  : status,
-      barcode : ev.barcode || '—',
-      pallet  : ev.pallet_no ? pad(ev.pallet_no, 6) : '—',
-    };
-    recentItems.unshift(row);
-    if (recentItems.length > MAX_ROWS) recentItems.pop();
-    renderTable(flash ? 0 : -1);
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  function renderTable(flashIdx) {
-    if (!recentItems.length) {
-      elEmpty.style.display = '';
-      elTable.style.display = 'none';
+  function logFlag(e) {
+    // short right-aligned status glyph per kind/level
+    if (e.kind === 'delivery') return e.delivered ? '✓ SENT' : '… QUEUED';
+    if (e.kind === 'incident') return (e.status === 'HEALED') ? '✓ FIXED' : '✗ OPEN';
+    if (e.kind === 'item') {
+      const s = (e.status || '').toUpperCase();
+      return s === 'ACCEPT' ? '✓' : '✗';
+    }
+    if (e.level === 'ok')    return '✓';
+    if (e.level === 'error') return '✗';
+    return '';
+  }
+
+  function logTime(e) {
+    // "YYYY-MM-DD HH:MM:SS" → show HH:MM:SS
+    const t = e.t || '';
+    return t.split(' ').pop() || t || '—';
+  }
+
+  function makeLogEl(e) {
+    const div = document.createElement('div');
+    div.className = 'log-row ' + (e.level || 'info');
+    div.innerHTML =
+      '<span class="log-time">' + esc(logTime(e)) + '</span>' +
+      '<span class="log-tag">' + esc(KIND_TAG[e.kind] || e.kind || 'LOG') + '</span>' +
+      '<span class="log-msg">' + esc(e.msg || '') + '</span>' +
+      '<span class="log-flag">' + esc(logFlag(e)) + '</span>';
+    return div;
+  }
+
+  function addLogEntry(e, flash) {
+    logRows.unshift(e);
+    if (logRows.length > MAX_LOG) logRows.length = MAX_LOG;
+    if (elLogList.style.display === 'none') {
+      elLogEmpty.style.display = 'none';
+      elLogList.style.display  = '';
+    }
+    const el = makeLogEl(e);
+    if (flash) el.classList.add('flash');
+    elLogList.insertBefore(el, elLogList.firstChild);
+    while (elLogList.childNodes.length > MAX_LOG) {
+      elLogList.removeChild(elLogList.lastChild);
+    }
+  }
+
+  function renderLog(entries) {
+    logRows = (entries || []).slice(-MAX_LOG);
+    elLogList.innerHTML = '';
+    if (!logRows.length) {
+      elLogEmpty.style.display = '';
+      elLogList.style.display  = 'none';
       return;
     }
-    elEmpty.style.display = 'none';
-    elTable.style.display = '';
-    elBody.innerHTML = '';
-    recentItems.forEach((r, i) => {
-      const ok  = r.status === 'ACCEPT';
-      const tr  = document.createElement('tr');
-      if (i === flashIdx) tr.className = 'new-row';
-      tr.innerHTML =
-        '<td><strong>' + r.item_no + '</strong></td>' +
-        '<td>' + r.time + '</td>' +
-        '<td><strong>' + r.weight + ' g</strong></td>' +
-        '<td>' + r.target + ' g</td>' +
-        '<td><span class="pill ' + (ok ? 'accept' : 'reject') + '">' + r.status + '</span></td>' +
-        '<td style="font-size:.8rem;color:#9a9a9a">' + r.barcode + '</td>' +
-        '<td>' + r.pallet + '</td>';
-      elBody.appendChild(tr);
-    });
+    elLogEmpty.style.display = 'none';
+    elLogList.style.display  = '';
+    // entries arrive oldest→newest; render newest first
+    for (let i = logRows.length - 1; i >= 0; i--) {
+      elLogList.appendChild(makeLogEl(logRows[i]));
+    }
+    logRows.reverse();   // keep internal buffer newest-first
   }
 
   /* ── poll weight every 500ms ── */
@@ -944,12 +985,9 @@
     const src = new EventSource('/live-events');
 
     src.addEventListener('item', ev => {
-      try {
-        const s   = JSON.parse(ev.data);
-        applyState(s);
-        const iev = s.item_event;
-        if (iev) addItemRow(iev, true);
-      } catch (_) {}
+      // item events keep the weight gauge + batch stats live; the per-item
+      // row itself is rendered by the Transmission Log (journal SSE) below.
+      try { applyState(JSON.parse(ev.data)); } catch (_) {}
     });
 
     src.addEventListener('status', ev => {
@@ -963,6 +1001,24 @@
     };
   }
   connectEvents();
+
+  /* ── Transmission & Event Log feed ── */
+  async function loadJournal() {
+    try {
+      const r = await fetch('/api/journal?n=120');
+      renderLog(await r.json());
+    } catch (_) {}
+  }
+  function connectJournal() {
+    const src = new EventSource('/journal-events');
+    src.addEventListener('entry', ev => {
+      try { addLogEntry(JSON.parse(ev.data), true); } catch (_) {}
+    });
+    // on drop, EventSource auto-reconnects; refresh history to fill any gap
+    src.onerror = () => { setTimeout(loadJournal, 3000); };
+  }
+  loadJournal();
+  connectJournal();
 
   /* ── Maintenance terminal — restricted plc_checkweigher session ──
      Server enforces the whitelist; this mirror exists only for instant
