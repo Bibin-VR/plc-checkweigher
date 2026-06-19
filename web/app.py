@@ -18,6 +18,39 @@ import time
 from datetime import datetime
 from flask import Flask, Response, jsonify, request, send_from_directory, abort, render_template, stream_with_context
 
+import errno
+import werkzeug.serving as _wserving
+
+# ── Quiet client-disconnect handling ─────────────────────────────────────────
+# The dashboard is polled every 250 ms by browser/kiosk clients on (sometimes
+# flaky) WiFi. When such a client vanishes mid-response the OS raises a bare
+# OSError (EHOSTUNREACH 113 / ENETUNREACH 101 / EPIPE / ECONNRESET). werkzeug's
+# dev server only treats ConnectionError + socket.timeout as benign drops, so
+# these leak as noisy "Error on request" tracebacks that bury REAL errors in
+# the journal. Route every socket OSError through werkzeug's silent
+# connection_dropped path, and downgrade only genuinely-unexpected errnos to a
+# one-line log (no traceback). ConnectionError is an OSError subclass, so the
+# original benign cases stay covered.
+_wserving.connection_dropped_errors = (OSError,)
+
+_BENIGN_DROP = {
+    errno.EPIPE, errno.ECONNRESET, errno.ECONNABORTED, errno.ENOTCONN,
+    errno.EHOSTUNREACH, errno.ENETUNREACH, errno.ETIMEDOUT,
+    errno.ESHUTDOWN, errno.EBADF,
+}
+
+
+class QuietWSGIRequestHandler(_wserving.WSGIRequestHandler):
+    def connection_dropped(self, error, environ=None):
+        e = getattr(error, "errno", None)
+        if e is not None and e not in _BENIGN_DROP:
+            # Unexpected socket error — keep a short record, but no traceback.
+            try:
+                self.server.log("error", f"request socket error (errno {e}): {error}")
+            except Exception:
+                pass
+
+
 # The transmission/event journal module lives one level up (project root).
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
@@ -510,4 +543,5 @@ def download_pdf(filename):
 if __name__ == "__main__":
     print(f"Report viewer running at  http://0.0.0.0:{PORT}")
     print(f"Serving PDFs from         {REPORTS_DIR}\n")
-    app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True,
+            request_handler=QuietWSGIRequestHandler)
