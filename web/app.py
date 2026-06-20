@@ -60,6 +60,18 @@ try:
 except Exception:                       # pragma: no cover - journal optional
     eventlog = None
 
+# ── SMB credentials — cached here for the backup-and-clear web action ─────────
+_SMB_HOST = _SMB_SHARE = _SMB_USER = _SMB_PASS = _SMB_SUBDIR = ""
+try:
+    import smb_config as _smb_cfg
+    _SMB_HOST   = getattr(_smb_cfg, "SMB_HOST",     "")
+    _SMB_SHARE  = getattr(_smb_cfg, "SMB_SHARE",    "")
+    _SMB_USER   = getattr(_smb_cfg, "SMB_USERNAME", "")
+    _SMB_PASS   = getattr(_smb_cfg, "SMB_PASSWORD", "")
+    _SMB_SUBDIR = getattr(_smb_cfg, "SMB_SUBDIR",   "")
+except ImportError:
+    pass
+
 LIVE_STATE_PATH = "/tmp/plc_live.json"
 
 REPORTS_DIR = "/home/pi/reports"
@@ -101,23 +113,67 @@ def parse_report(filename: str) -> dict:
     }
 
 
+def walk_reports_tree() -> dict:
+    """Walk REPORTS_DIR and return all files organised by subdirectory."""
+    tree = {"root": [], "subdirs": {}}
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+    for dirpath, dirnames, filenames in os.walk(REPORTS_DIR):
+        dirnames.sort()
+        rel_dir = os.path.relpath(dirpath, REPORTS_DIR)
+        files = []
+        for fname in sorted(filenames, key=str.lower):
+            if fname.startswith("."):
+                continue
+            if os.path.splitext(fname)[1].lower() == ".csv":
+                continue
+            fpath = os.path.join(dirpath, fname)
+            try:
+                st = os.stat(fpath)
+            except OSError:
+                continue
+            dt  = datetime.fromtimestamp(st.st_mtime)
+            ext = os.path.splitext(fname)[1].lower()[1:] or "file"
+            files.append({
+                "name"    : fname,
+                "relpath" : os.path.relpath(fpath, REPORTS_DIR),
+                "size_kb" : round(st.st_size / 1024, 1),
+                "mtime"   : st.st_mtime,
+                "date_str": dt.strftime("%d %b %Y"),
+                "time_str": dt.strftime("%H:%M:%S"),
+                "ext"     : ext,
+                "is_pdf"  : ext == "pdf",
+            })
+        files.sort(key=lambda f: f["mtime"], reverse=True)
+        if rel_dir == ".":
+            tree["root"] = files
+        else:
+            tree["subdirs"][rel_dir] = files
+    return tree
+
+
 @app.route("/")
 def index():
     os.makedirs(REPORTS_DIR, exist_ok=True)
-    files = sorted(
-        [f for f in os.listdir(REPORTS_DIR) if f.endswith(".pdf")],
-        key=lambda f: os.path.getmtime(os.path.join(REPORTS_DIR, f)),
-        reverse=True,
-    )
-    reports = [parse_report(f) for f in files]
+    tree = walk_reports_tree()
 
-    # Group by date
-    groups = {}
-    for r in reports:
-        key = r["date_str"]
-        groups.setdefault(key, []).append(r)
+    # Enrich PDF root entries with batch number from filename
+    non_pdf_root = [f for f in tree["root"] if not f["is_pdf"]]
+    pdf_root     = [f for f in tree["root"] if f["is_pdf"]]
+    for f in pdf_root:
+        f["batch"] = parse_report(f["name"])["batch"]
 
-    return render_template("index.html", groups=groups, total=len(reports))
+    # Group PDFs by date for the card view
+    groups: dict = {}
+    for f in pdf_root:
+        groups.setdefault(f["date_str"], []).append(f)
+
+    return render_template("index.html",
+                           non_pdf_root=non_pdf_root,
+                           groups=groups,
+                           subdirs=tree["subdirs"],
+                           total=len(pdf_root),
+                           smb_host=_SMB_HOST or "not configured",
+                           smb_share=_SMB_SHARE or "—")
 
 
 @app.route("/live")
@@ -538,6 +594,139 @@ def download_pdf(filename):
     return send_from_directory(REPORTS_DIR, safe,
                                mimetype="application/pdf",
                                as_attachment=True)
+
+
+@app.route("/file/<path:relpath>")
+def serve_report_file(relpath):
+    """Serve any file from REPORTS_DIR with path-traversal protection."""
+    abs_path    = os.path.realpath(os.path.join(REPORTS_DIR, relpath))
+    reports_abs = os.path.realpath(REPORTS_DIR)
+    if not (abs_path == reports_abs or abs_path.startswith(reports_abs + os.sep)):
+        abort(403)
+    if not os.path.isfile(abs_path):
+        abort(404)
+    return send_from_directory(os.path.dirname(abs_path),
+                               os.path.basename(abs_path),
+                               as_attachment=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Backup & Clear — zip REPORTS_DIR, push to SMB backups/, delete local files.
+# Streamed as SSE so the browser shows live progress.
+# Requires a valid maintenance token (same as the console auth gate).
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/backup-and-clear")
+def api_backup_and_clear():
+    tok = request.args.get("token", "")
+
+    def sse(gen):
+        return Response(stream_with_context(gen()),
+                        mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache",
+                                 "X-Accel-Buffering": "no"})
+
+    if not _token_valid(tok):
+        def denied():
+            yield "data: [AUTH-REQUIRED] enter the maintenance access code\n\n"
+            yield "data: [DONE] exit=1\n\n"
+        return sse(denied)
+
+    if not _CMD_LOCK.acquire(blocking=False):
+        def busy():
+            yield "data: [BUSY] another command is running — wait and retry\n\n"
+            yield "data: [DONE] exit=1\n\n"
+        return sse(busy)
+
+    def generate():
+        import zipfile as _zmod
+        try:
+            # ── 1. Collect all files ────────────────────────────────────────
+            all_files = []
+            for dp, _, fnames in os.walk(REPORTS_DIR):
+                for fn in fnames:
+                    all_files.append(os.path.join(dp, fn))
+
+            if not all_files:
+                yield "data: Reports directory is already empty — nothing to backup.\n\n"
+                yield "data: [DONE] exit=0\n\n"
+                return
+
+            # ── 2. Create zip archive in /tmp ───────────────────────────────
+            ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
+            zip_name = f"reports_backup_{ts}.zip"
+            zip_path = f"/tmp/{zip_name}"
+
+            yield f"data: Archiving {len(all_files)} file(s) → {zip_name}…\n\n"
+            with _zmod.ZipFile(zip_path, "w", _zmod.ZIP_DEFLATED) as zf:
+                for fp in all_files:
+                    zf.write(fp, os.path.relpath(fp, REPORTS_DIR))
+            zip_kb = round(os.path.getsize(zip_path) / 1024, 1)
+            yield f"data: Archive ready — {zip_kb} KB\n\n"
+
+            # ── 3. Upload to SMB backups/ subfolder ─────────────────────────
+            if not _SMB_HOST or not _SMB_SHARE:
+                yield "data: [ERROR] SMB not configured — set SMB_HOST/SHARE in smb_config.py\n\n"
+                yield "data: [DONE] exit=1\n\n"
+                os.unlink(zip_path)
+                return
+
+            share  = f"//{_SMB_HOST}/{_SMB_SHARE}"
+            auth   = f"{_SMB_USER}%{_SMB_PASS}" if _SMB_USER else "%"
+            bkpdir = (f"{_SMB_SUBDIR.strip('/')}/backups"
+                      if _SMB_SUBDIR else "backups")
+            dest   = f"{bkpdir}/{zip_name}"
+
+            yield f"data: Creating SMB folder /{bkpdir}/…\n\n"
+            # mkdir is silent on "already exists" errors
+            subprocess.run(
+                ["smbclient", share, "-U", auth, "-c", f'mkdir "{bkpdir}"'],
+                capture_output=True, text=True, timeout=10,
+            )
+
+            yield f"data: Uploading to \\\\{_SMB_HOST}\\{_SMB_SHARE}\\{dest}…\n\n"
+            res = subprocess.run(
+                ["smbclient", share, "-U", auth,
+                 "-c", f'put "{zip_path}" "{dest}"'],
+                capture_output=True, text=True, timeout=180,
+            )
+            os.unlink(zip_path)
+
+            if res.returncode != 0:
+                lines = (res.stderr or res.stdout or "").strip().splitlines()
+                err   = lines[-1] if lines else f"exit {res.returncode}"
+                yield f"data: [ERROR] SMB upload failed: {err}\n\n"
+                yield "data: [DONE] exit=1\n\n"
+                return
+
+            yield f"data: ✓ Backup uploaded to SMB\n\n"
+
+            # ── 4. Delete all local files & subdirs ─────────────────────────
+            yield f"data: Clearing {REPORTS_DIR}…\n\n"
+            deleted = 0
+            for dp, dns, fnames in os.walk(REPORTS_DIR, topdown=False):
+                for fn in fnames:
+                    try:
+                        os.unlink(os.path.join(dp, fn))
+                        deleted += 1
+                    except OSError:
+                        pass
+                if os.path.relpath(dp, REPORTS_DIR) != ".":
+                    try:
+                        os.rmdir(dp)
+                    except OSError:
+                        pass
+
+            yield f"data: ✓ Deleted {deleted} file(s) from Pi\n\n"
+            yield "data: [DONE] exit=0\n\n"
+
+        except Exception as exc:
+            yield f"data: [ERROR] {exc}\n\n"
+            yield "data: [DONE] exit=1\n\n"
+        finally:
+            _CMD_LOCK.release()
+
+    return sse(generate)
 
 
 if __name__ == "__main__":

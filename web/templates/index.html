@@ -5,10 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>REPORT ARCHIVE — SAI SAMARTH ENGINEERING</title>
   <style>
-    /* ════════════════════════════════════════════════════════════════════
-       TACTICAL TELEMETRY — REPORT ARCHIVE / DOSSIER INDEX
-       Substrate #0A0A0A · Phosphor #EAEAEA · Hazard #FF2A2A
-       ════════════════════════════════════════════════════════════════════ */
     :root {
       --sub:    #0A0A0A;
       --panel:  #111111;
@@ -19,6 +15,8 @@
       --faint:  #7E7E7E;
       --red:    #FF3B3B;
       --grn:    #52FA30;
+      --ylw:    #FFB000;
+      --blu:    #4AAFE6;
       --mono: "JetBrains Mono","IBM Plex Mono","Cascadia Mono","SF Mono",
               Consolas,"Liberation Mono","Courier New",monospace;
       --display: "Arial Black","Archivo Black","Helvetica Neue",Arial,sans-serif;
@@ -47,7 +45,7 @@
       );
     }
 
-    /* ════════════════ HEADER ════════════════ */
+    /* ════ HEADER ════ */
     header {
       border-bottom: 2px solid var(--line-2);
       padding: 16px 22px 14px;
@@ -82,22 +80,25 @@
       padding: 5px 12px;
       border: 1px solid var(--line-2);
       white-space: nowrap;
-      color: var(--fg);
     }
-    .hdr-live-link {
-      color: var(--dim);
-      text-decoration: none;
-      font-size: 12px;
-      letter-spacing: .12em;
+
+    .btn-backup {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .16em;
       text-transform: uppercase;
-      padding: 6px 10px;
-      border: 1px solid var(--line);
+      padding: 6px 14px;
+      background: var(--panel);
+      color: var(--ylw);
+      border: 1px solid var(--ylw);
+      cursor: pointer;
       white-space: nowrap;
     }
-    .hdr-live-link:hover { color: var(--fg); border-color: var(--fg); }
+    .btn-backup:hover { background: var(--ylw); color: var(--sub); }
 
-    /* ── TAB MODULE — remote system navigation ── */
-    .tab-bar {
+    /* ════ PAGE NAV TABS (Ops / Archive) ════ */
+    .nav-tab-bar {
       display: flex;
       align-items: stretch;
       border-bottom: 1px solid var(--line-2);
@@ -105,7 +106,7 @@
       padding: 0 22px;
       gap: 1px;
     }
-    .tab {
+    .nav-tab {
       font-family: var(--mono);
       font-size: 12px;
       font-weight: 700;
@@ -120,16 +121,16 @@
       position: relative;
       top: 1px;
     }
-    .tab:hover { color: var(--fg); }
-    .tab.active {
+    .nav-tab:hover { color: var(--fg); }
+    .nav-tab.active {
       color: var(--fg);
       background: var(--panel);
       border-color: var(--line-2);
       border-bottom: 1px solid var(--panel);
     }
-    .tab.active::before { content: "▸ "; color: var(--red); }
-    .tab-fill { flex: 1; }
-    .tab-meta {
+    .nav-tab.active::before { content: "▸ "; color: var(--red); }
+    .nav-fill { flex: 1; }
+    .nav-meta {
       align-self: center;
       font-size: 10px;
       letter-spacing: .2em;
@@ -137,7 +138,7 @@
       text-transform: uppercase;
     }
 
-    /* link status — square indicator, terminal green = SSE link up */
+    /* live dot */
     .live-dot {
       width: 10px; height: 10px;
       background: var(--grn);
@@ -148,14 +149,9 @@
     }
     .live-dot.off { background: var(--faint); animation: none; }
     @keyframes blink { 50% { opacity: .45; } }
-    .live-label {
-      font-size: 10px;
-      color: var(--faint);
-      letter-spacing: .2em;
-      text-transform: uppercase;
-    }
+    .live-label { font-size: 10px; color: var(--faint); letter-spacing: .2em; text-transform: uppercase; }
 
-    /* ════════════════ MAIN ════════════════ */
+    /* ════ MAIN ════ */
     main { max-width: 1020px; margin: 0 auto; padding: 24px 16px 56px; }
 
     .empty {
@@ -169,8 +165,47 @@
     }
     .empty::before { content: ">>> "; color: var(--red); }
 
-    .day-group { margin-bottom: 34px; }
+    /* ════ CONTENT TABS (folder navigation within Archive) ════ */
+    .ctab-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1px;
+      background: var(--line);
+      border: 1px solid var(--line);
+      margin-bottom: 24px;
+    }
+    .ctab {
+      padding: 9px 22px;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      background: var(--panel);
+      color: var(--dim);
+      border: none;
+      cursor: pointer;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .ctab:hover  { background: #1a1a1a; color: var(--fg); }
+    .ctab.active { background: var(--fg); color: var(--sub); }
+    .ctab.active .ctab-cnt { opacity: .55; }
+    .ctab .ctab-cnt {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      opacity: .6;
+    }
+    .ctab .ctab-ico { font-size: 10px; }
 
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ════ DATE SECTIONS (within Reports tab) ════ */
+    .day-group { margin-bottom: 34px; }
     .day-label {
       font-size: 11px;
       font-weight: 700;
@@ -183,6 +218,7 @@
     }
     .day-label::before { content: "// "; color: var(--red); }
 
+    /* ════ PDF CARDS ════ */
     .card-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
@@ -190,61 +226,37 @@
       background: var(--line);
       border: 1px solid var(--line);
     }
-
-    /* dossier entry — square compartment */
     .card {
       background: var(--panel);
       padding: 16px 18px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
+      display: flex; flex-direction: column; gap: 12px;
     }
     .card:hover { background: #131313; }
-
     .card-top { display: flex; align-items: flex-start; gap: 13px; }
-
     .pdf-icon {
       width: 38px; height: 38px; flex-shrink: 0;
       border: 1px solid var(--line-2);
       display: flex; align-items: center; justify-content: center;
     }
     .pdf-icon svg { width: 20px; height: 20px; fill: var(--dim); }
-
     .card-info { flex: 1; min-width: 0; }
     .card-info .batch {
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--fg);
-      letter-spacing: .06em;
-      text-transform: uppercase;
+      font-size: 14px; font-weight: 700; color: var(--fg);
+      letter-spacing: .06em; text-transform: uppercase;
     }
-    .card-info .meta {
-      font-size: 12px;
-      color: var(--dim);
-      margin-top: 4px;
-      letter-spacing: .04em;
-    }
+    .card-info .meta { font-size: 12px; color: var(--dim); margin-top: 4px; letter-spacing: .04em; }
     .card-info .fname {
-      font-size: 10px;
-      color: var(--faint);
-      margin-top: 3px;
-      letter-spacing: .02em;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      font-size: 10px; color: var(--faint); margin-top: 3px;
+      letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-
     .card-actions { display: flex; gap: 1px; background: var(--line); border: 1px solid var(--line); }
     .btn {
       flex: 1;
       display: inline-flex; align-items: center; justify-content: center; gap: 6px;
       padding: 8px 0;
-      font-family: var(--mono);
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: .18em;
-      text-transform: uppercase;
-      text-decoration: none;
-      cursor: pointer;
-      border: none;
+      font-family: var(--mono); font-size: 11px; font-weight: 700;
+      letter-spacing: .18em; text-transform: uppercase;
+      text-decoration: none; cursor: pointer; border: none;
     }
     .btn svg { width: 12px; height: 12px; fill: currentColor; }
     .btn-view     { background: var(--fg);   color: var(--sub); }
@@ -252,124 +264,175 @@
     .btn-download { background: var(--panel); color: var(--dim); }
     .btn-download:hover { color: var(--fg); }
 
-    /* ════════════════ PDF VIEWER — terminal window ════════════════ */
+    /* ════ FILE ROWS (log / health / misc files) ════ */
+    .file-table {
+      border: 1px solid var(--line);
+      background: var(--line);
+      display: flex; flex-direction: column; gap: 1px;
+    }
+    .file-row {
+      display: flex; align-items: center; gap: 14px;
+      padding: 10px 14px;
+      background: var(--panel);
+    }
+    .file-row:hover { background: #131313; }
+    .file-ext {
+      width: 36px; height: 36px; flex-shrink: 0;
+      border: 1px solid var(--line-2);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase; color: var(--faint);
+    }
+    .file-ext.ext-log  { color: var(--ylw); border-color: var(--ylw); }
+    .file-ext.ext-txt  { color: var(--ylw); border-color: var(--ylw); }
+    .file-ext.ext-json { color: var(--grn); border-color: var(--grn); }
+    .file-ext.ext-pdf  { color: var(--dim); }
+    .file-info { flex: 1; min-width: 0; }
+    .file-info .fname {
+      font-size: 13px; font-weight: 700; color: var(--fg);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .file-info .fmeta { font-size: 11px; color: var(--dim); margin-top: 3px; letter-spacing: .04em; }
+    .file-dl {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 6px 12px;
+      font-family: var(--mono); font-size: 10px; font-weight: 700;
+      letter-spacing: .16em; text-transform: uppercase; text-decoration: none;
+      background: var(--panel); color: var(--dim); border: 1px solid var(--line-2);
+      flex-shrink: 0;
+    }
+    .file-dl:hover { color: var(--fg); border-color: var(--fg); }
+    .file-dl svg { width: 11px; height: 11px; fill: currentColor; }
+
+    /* ════ PDF VIEWER ════ */
     #overlay {
-      display: none;
-      position: fixed; inset: 0;
-      background: rgba(0,0,0,0.82);
-      z-index: 100;
-      align-items: center;
-      justify-content: center;
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.82); z-index: 100;
+      align-items: center; justify-content: center;
     }
     #overlay.active { display: flex; }
     #viewer-box {
-      background: var(--sub);
-      border: 1px solid var(--line-2);
-      width: 95vw; max-width: 880px;
-      height: 92vh;
-      display: flex; flex-direction: column;
-      overflow: hidden;
+      background: var(--sub); border: 1px solid var(--line-2);
+      width: 95vw; max-width: 880px; height: 92vh;
+      display: flex; flex-direction: column; overflow: hidden;
     }
     #viewer-toolbar {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 14px;
-      border-bottom: 1px solid var(--line-2);
-      flex-shrink: 0;
-      gap: 8px;
+      padding: 10px 14px; border-bottom: 1px solid var(--line-2);
+      flex-shrink: 0; gap: 8px;
     }
     #viewer-title {
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: .08em;
-      text-transform: uppercase;
+      font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
       flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     #viewer-title::before { content: "[ DOC ] "; color: var(--red); }
     #viewer-page-info { font-size: 11px; color: var(--faint); white-space: nowrap; letter-spacing: .12em; }
     #viewer-close {
-      background: none;
-      border: 1px solid var(--line-2);
-      color: var(--fg);
-      font-family: var(--mono);
-      font-size: 14px; cursor: pointer; line-height: 1;
-      padding: 4px 10px; flex-shrink: 0;
+      background: none; border: 1px solid var(--line-2); color: var(--fg);
+      font-family: var(--mono); font-size: 14px; cursor: pointer;
+      line-height: 1; padding: 4px 10px; flex-shrink: 0;
     }
     #viewer-close:hover { border-color: var(--red); color: var(--red); }
     #viewer-scroll {
-      flex: 1;
-      overflow-y: auto;
-      background: #161616;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 14px 8px;
-      gap: 10px;
+      flex: 1; overflow-y: auto; background: #161616;
+      display: flex; flex-direction: column; align-items: center;
+      padding: 14px 8px; gap: 10px;
     }
-    #viewer-scroll canvas {
-      max-width: 100%;
-      height: auto;
-      outline: 1px solid var(--line-2);
-      display: block;
-    }
-    #viewer-loading {
-      color: var(--faint); font-size: 12px; margin: auto;
-      letter-spacing: .2em; text-transform: uppercase;
-    }
+    #viewer-scroll canvas { max-width: 100%; height: auto; outline: 1px solid var(--line-2); display: block; }
+    #viewer-loading { color: var(--faint); font-size: 12px; margin: auto; letter-spacing: .2em; text-transform: uppercase; }
 
-    /* ── new dossier highlight — hazard red ── */
-    .card-new {
-      outline: 1px solid var(--red);
-      outline-offset: -1px;
-      animation: card-pop .3s steps(3);
-    }
-    @keyframes card-pop {
-      from { opacity: 0; }
-      to   { opacity: 1; }
-    }
-    .new-badge {
-      color: var(--red);
-      font-size: 10px; font-weight: 700;
-      letter-spacing: .14em; text-transform: uppercase;
-      vertical-align: middle;
-    }
+    /* new card flash */
+    .card-new { outline: 1px solid var(--red); outline-offset: -1px; animation: card-pop .3s steps(3); }
+    @keyframes card-pop { from { opacity: 0; } to { opacity: 1; } }
+    .new-badge { color: var(--red); font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; vertical-align: middle; }
     .new-badge::before { content: "[ "; }
     .new-badge::after  { content: " ]"; }
 
-    /* ── toast ── */
-    #toast-container {
-      position: fixed; bottom: 20px; right: 20px;
-      display: flex; flex-direction: column; gap: 8px;
-      z-index: 200; pointer-events: none;
-    }
+    /* toast */
+    #toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 200; pointer-events: none; }
     .toast {
-      background: var(--sub);
-      color: var(--fg);
-      padding: 11px 16px;
-      font-size: 12px;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-      border: 1px solid var(--line-2);
-      border-left: 3px solid var(--red);
+      background: var(--sub); color: var(--fg);
+      padding: 11px 16px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+      border: 1px solid var(--line-2); border-left: 3px solid var(--red);
       animation: toast-in .25s steps(3);
     }
-    @keyframes toast-in {
-      from { transform: translateX(14px); opacity: 0; }
-      to   { transform: translateX(0);    opacity: 1; }
-    }
+    @keyframes toast-in { from { transform: translateX(14px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 
-    /* footer strip */
+    /* ════ BACKUP OVERLAY ════ */
+    #bkp-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.85); z-index: 110;
+      align-items: center; justify-content: center;
+    }
+    #bkp-overlay.active { display: flex; }
+    #bkp-window {
+      background: var(--sub); border: 1px solid var(--line-2);
+      width: 94vw; max-width: 560px;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #bkp-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line-2);
+    }
+    .bkp-title { font-size: 12px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--ylw); }
+    .bkp-title::before { content: "[ "; color: var(--line-2); }
+    .bkp-title::after  { content: " ]"; color: var(--line-2); }
+    #bkp-close {
+      background: none; border: 1px solid var(--line-2); color: var(--fg);
+      font-family: var(--mono); font-size: 14px; cursor: pointer; padding: 3px 9px;
+    }
+    #bkp-close:hover { border-color: var(--red); color: var(--red); }
+    #bkp-auth { padding: 32px 24px; text-align: center; }
+    .bkp-auth-label { font-size: 13px; font-weight: 700; letter-spacing: .22em; color: var(--red); text-transform: uppercase; margin-bottom: 8px; }
+    .bkp-auth-hint { font-size: 11px; color: var(--dim); letter-spacing: .12em; text-transform: uppercase; margin-bottom: 18px; }
+    #bkp-auth-input {
+      background: var(--sub); border: 1px solid var(--line-2); color: var(--fg);
+      font-family: var(--mono); font-size: 15px; letter-spacing: .3em;
+      text-align: center; padding: 10px 14px; width: 260px; outline: none;
+      caret-color: var(--grn); display: block; margin: 0 auto;
+    }
+    #bkp-auth-input:focus { border-color: var(--fg); }
+    #bkp-auth-err { font-size: 11px; color: var(--red); letter-spacing: .1em; text-transform: uppercase; margin-top: 12px; min-height: 14px; }
+    #bkp-confirm { padding: 28px 24px; }
+    .bkp-warn-box {
+      border: 1px solid var(--ylw); padding: 14px 16px; margin-bottom: 20px;
+      font-size: 12px; line-height: 1.7; color: var(--fg); letter-spacing: .03em;
+    }
+    .bkp-warn-box strong { color: var(--ylw); }
+    .bkp-target {
+      font-size: 11px; color: var(--dim); letter-spacing: .04em;
+      margin-bottom: 22px; padding: 8px 12px; border: 1px solid var(--line); background: var(--panel);
+    }
+    .bkp-target span { color: var(--faint); }
+    .bkp-btn-row { display: flex; gap: 1px; background: var(--line); }
+    .bkp-btn {
+      flex: 1; font-family: var(--mono); font-size: 11px; font-weight: 700;
+      letter-spacing: .18em; text-transform: uppercase; padding: 11px 0;
+      background: var(--panel); color: var(--fg); border: none; cursor: pointer;
+    }
+    .bkp-btn:hover { background: var(--fg); color: var(--sub); }
+    .bkp-btn.danger { color: var(--red); }
+    .bkp-btn.danger:hover { background: var(--red); color: var(--fg); }
+    #bkp-prog { padding: 16px; }
+    #bkp-out {
+      background: var(--panel); border: 1px solid var(--line-2); color: var(--fg);
+      font-family: var(--mono); font-size: 12px; line-height: 1.6;
+      padding: 12px 14px; max-height: 320px; overflow-y: auto;
+      white-space: pre-wrap; word-break: break-all; letter-spacing: .02em; margin-bottom: 14px;
+    }
+    #bkp-done-btn {
+      display: none; width: 100%;
+      font-family: var(--mono); font-size: 11px; font-weight: 700;
+      letter-spacing: .18em; text-transform: uppercase; padding: 10px 0;
+      background: var(--fg); color: var(--sub); border: none; cursor: pointer;
+    }
+    #bkp-done-btn:hover { background: var(--grn); }
+
+    /* footer */
     .sys-strip {
-      max-width: 1020px;
-      margin: 0 auto;
-      padding: 0 16px 28px;
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
-      font-size: 10px;
-      letter-spacing: .18em;
-      text-transform: uppercase;
-      color: var(--faint);
+      max-width: 1020px; margin: 0 auto; padding: 0 16px 28px;
+      display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--faint);
     }
   </style>
 </head>
@@ -380,63 +443,109 @@
     <h1>Sai Samarth Engineering</h1>
     <p>Production Report Archive</p>
   </div>
-  <div style="display:flex;align-items:center;gap:14px;flex-shrink:0;flex-wrap:wrap;">
+  <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap;">
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="live-dot off" id="live-dot"></span>
       <span class="live-label">Link</span>
     </div>
     <span class="badge" id="total-badge">{{ total }} report{{ 's' if total != 1 else '' }}</span>
+    <button class="btn-backup" onclick="openBackup()">⬆ Backup &amp; Clear</button>
   </div>
 </header>
 
-<!-- tab module — remote system navigation -->
-<nav class="tab-bar">
-  <a class="tab" href="/live">Ops</a>
-  <a class="tab active" href="/">Archive</a>
-  <span class="tab-fill"></span>
-  <span class="tab-meta">REMOTE // CW-2400</span>
+<nav class="nav-tab-bar">
+  <a class="nav-tab" href="/live">Ops</a>
+  <a class="nav-tab active" href="/">Archive</a>
+  <span class="nav-fill"></span>
+  <span class="nav-meta">REMOTE // CW-2400</span>
 </nav>
 
 <main>
-  {% if not groups %}
-  <div class="empty">No reports on file<br>Entries appear after each production batch</div>
-  {% else %}
-    {% for date, reports in groups.items() %}
-    <div class="day-group" data-date="{{ date }}">
-      <div class="day-label">{{ date }}</div>
-      <div class="card-grid">
-        {% for r in reports %}
-        <div class="card">
-          <div class="card-top">
-            <div class="pdf-icon">
-              <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>
+
+  {# ── Content tab bar ── #}
+  {% set has_subdirs = subdirs | selectattr('__len__') | list | length > 0 %}
+  <div class="ctab-bar" id="ctab-bar">
+    <button class="ctab active" data-panel="reports">
+      <span class="ctab-ico">◈</span> Reports
+      <span class="ctab-cnt">{{ total }}</span>
+    </button>
+    {% for dirname, files in subdirs.items() %}{% if files %}
+    <button class="ctab" data-panel="{{ dirname | replace('/', '_') | replace(' ', '_') }}">
+      <span class="ctab-ico">▶</span> {{ dirname }}/
+      <span class="ctab-cnt">{{ files | length }}</span>
+    </button>
+    {% endif %}{% endfor %}
+  </div>
+
+  {# ── Reports tab panel ── #}
+  <div id="panel-reports" class="tab-panel active">
+    {% if not groups %}
+    <div class="empty">No reports on file<br>Entries appear after each production batch</div>
+    {% else %}
+      {% for date, reports in groups.items() %}
+      <div class="day-group" data-date="{{ date }}">
+        <div class="day-label">{{ date }}</div>
+        <div class="card-grid">
+          {% for r in reports %}
+          <div class="card">
+            <div class="card-top">
+              <div class="pdf-icon">
+                <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>
+              </div>
+              <div class="card-info">
+                <div class="batch">Batch {{ r.batch }}</div>
+                <div class="meta">{{ r.time_str }} &nbsp;//&nbsp; {{ r.size_kb }} KB</div>
+                <div class="fname" title="{{ r.name }}">{{ r.name }}</div>
+              </div>
             </div>
-            <div class="card-info">
-              <div class="batch">Batch {{ r.batch }}</div>
-              <div class="meta">{{ r.time_str }} &nbsp;//&nbsp; {{ r.size_kb }} KB</div>
-              <div class="fname" title="{{ r.filename }}">{{ r.filename }}</div>
+            <div class="card-actions">
+              <a class="btn btn-view" href="#" onclick="openPdf('/pdf/{{ r.name }}', '{{ r.name }}'); return false;">
+                <svg viewBox="0 0 24 24"><path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>
+                View
+              </a>
+              <a class="btn btn-download" href="/download/{{ r.name }}">
+                <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                Download
+              </a>
             </div>
           </div>
-          <div class="card-actions">
-            <a class="btn btn-view" href="#" onclick="openPdf('/pdf/{{ r.filename }}', '{{ r.filename }}'); return false;">
-              <svg viewBox="0 0 24 24"><path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>
-              View
-            </a>
-            <a class="btn btn-download" href="/download/{{ r.filename }}">
-              <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-              Download
-            </a>
-          </div>
+          {% endfor %}
         </div>
-        {% endfor %}
       </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+
+  {# ── Subdir tab panels (logs/, health/, etc.) ── #}
+  {% for dirname, files in subdirs.items() %}{% if files %}
+  {% set pid = dirname | replace('/', '_') | replace(' ', '_') %}
+  <div id="panel-{{ pid }}" class="tab-panel">
+    {% if not files %}
+    <div class="empty">No files in {{ dirname }}/</div>
+    {% else %}
+    <div class="file-table">
+      {% for f in files %}
+      <div class="file-row">
+        <div class="file-ext ext-{{ f.ext }}">{{ f.ext }}</div>
+        <div class="file-info">
+          <div class="fname" title="{{ f.name }}">{{ f.name }}</div>
+          <div class="fmeta">{{ f.date_str }} &nbsp;·&nbsp; {{ f.time_str }} &nbsp;·&nbsp; {{ f.size_kb }} KB</div>
+        </div>
+        <a class="file-dl" href="/file/{{ f.relpath }}">
+          <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+          Download
+        </a>
+      </div>
+      {% endfor %}
     </div>
-    {% endfor %}
-  {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}{% endfor %}
+
 </main>
 
 <div class="sys-strip">
-  <span>ARCHIVE / PDF</span>
+  <span>ARCHIVE / FULL DIRECTORY</span>
   <span>SMB PUSH // STORE &amp; FORWARD</span>
   <span>SAI SAMARTH ENGINEERING &copy; GOA</span>
 </div>
@@ -455,74 +564,111 @@
   </div>
 </div>
 
+<!-- Backup & Clear overlay -->
+<div id="bkp-overlay" onclick="if(event.target===this)closeBackup()">
+  <div id="bkp-window">
+    <div id="bkp-head">
+      <span class="bkp-title">Backup &amp; Clear Reports</span>
+      <button id="bkp-close" onclick="closeBackup()">✕</button>
+    </div>
+    <div id="bkp-auth">
+      <div class="bkp-auth-label">&gt;&gt;&gt; Restricted Access</div>
+      <div class="bkp-auth-hint">Enter maintenance access code</div>
+      <input id="bkp-auth-input" type="password" autocomplete="off" placeholder="ACCESS CODE" />
+      <div id="bkp-auth-err"></div>
+    </div>
+    <div id="bkp-confirm" style="display:none">
+      <div class="bkp-warn-box">
+        <strong>⚠ Warning:</strong> This will zip the entire
+        <strong>/home/pi/reports/</strong> directory and upload it to the SMB
+        share, then <strong>permanently delete</strong> all local files from the Pi.
+        This cannot be undone.
+      </div>
+      <div class="bkp-target">
+        <span>Destination:</span>
+        \\{{ smb_host }}\{{ smb_share }}\backups\reports_backup_&lt;timestamp&gt;.zip
+      </div>
+      <div class="bkp-btn-row">
+        <button class="bkp-btn danger" onclick="confirmBackup()">⬆ Backup &amp; Delete All</button>
+        <button class="bkp-btn" onclick="closeBackup()">Cancel</button>
+      </div>
+    </div>
+    <div id="bkp-prog" style="display:none">
+      <pre id="bkp-out"></pre>
+      <button id="bkp-done-btn" onclick="closeBackup(); window.location.reload()">Close &amp; Refresh</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
 <script src="/static/pdf.min.js"></script>
 <script>
   pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdf.worker.min.js';
 
+  /* ── PDF viewer ── */
   function openPdf(url, name) {
-    const scroll   = document.getElementById('viewer-scroll');
-    const loading  = document.getElementById('viewer-loading');
+    const scroll  = document.getElementById('viewer-scroll');
+    const loading = document.getElementById('viewer-loading');
     const pageInfo = document.getElementById('viewer-page-info');
-
     document.getElementById('viewer-title').textContent = name;
     scroll.innerHTML = '';
     loading.textContent = 'Loading…';
     scroll.appendChild(loading);
     pageInfo.textContent = '';
     document.getElementById('overlay').classList.add('active');
-
     const scale = window.innerWidth < 600 ? 1.2 : 1.8;
-
     pdfjsLib.getDocument(url).promise.then(pdf => {
       loading.remove();
       pageInfo.textContent = `${pdf.numPages} page${pdf.numPages > 1 ? 's' : ''}`;
-
       const renders = [];
       for (let p = 1; p <= pdf.numPages; p++) {
-        renders.push(
-          pdf.getPage(p).then(page => {
-            const vp     = page.getViewport({ scale });
-            const canvas = document.createElement('canvas');
-            canvas.width  = vp.width;
-            canvas.height = vp.height;
-            canvas.style.width = '100%';
-            return page.render({ canvasContext: canvas.getContext('2d'), viewport: vp })
-                       .promise.then(() => ({ page: p, canvas }));
-          })
-        );
+        renders.push(pdf.getPage(p).then(page => {
+          const vp = page.getViewport({ scale });
+          const canvas = document.createElement('canvas');
+          canvas.width = vp.width; canvas.height = vp.height; canvas.style.width = '100%';
+          return page.render({ canvasContext: canvas.getContext('2d'), viewport: vp })
+                     .promise.then(() => ({ page: p, canvas }));
+        }));
       }
-      // Append in order regardless of render completion order
       Promise.all(renders).then(results => {
-        results.sort((a, b) => a.page - b.page)
-               .forEach(r => scroll.appendChild(r.canvas));
+        results.sort((a, b) => a.page - b.page).forEach(r => scroll.appendChild(r.canvas));
       });
-    }).catch(err => {
-      loading.textContent = 'Failed to load PDF: ' + err.message;
-    });
+    }).catch(err => { loading.textContent = 'Failed to load PDF: ' + err.message; });
   }
 
   function closeViewer() {
     document.getElementById('overlay').classList.remove('active');
-    document.getElementById('viewer-scroll').innerHTML =
-      '<div id="viewer-loading">Loading…</div>';
+    document.getElementById('viewer-scroll').innerHTML = '<div id="viewer-loading">Loading…</div>';
     document.getElementById('viewer-page-info').textContent = '';
   }
 
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeViewer(); });
-</script>
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closeViewer(); closeBackup(); }
+  });
 
-<div id="toast-container"></div>
+  /* ── Content tab switching ── */
+  const reportsPanel = document.getElementById('panel-reports');
 
-<script>
-  const liveDot      = document.getElementById('live-dot');
-  const totalBadge   = document.getElementById('total-badge');
+  document.querySelectorAll('.ctab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.ctab').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      const panelId = 'panel-' + btn.dataset.panel;
+      const panel = document.getElementById(panelId);
+      if (panel) panel.classList.add('active');
+    });
+  });
+
+  /* ── SSE — live new-PDF cards ── */
+  const liveDot        = document.getElementById('live-dot');
+  const totalBadge     = document.getElementById('total-badge');
   const toastContainer = document.getElementById('toast-container');
-  const mainEl       = document.querySelector('main');
 
   function escHtml(s) {
-    return String(s)
-      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-      .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
   function showToast(msg) {
@@ -533,15 +679,12 @@
   }
 
   function createCard(r) {
-    const fn  = r.filename;
-    const fnH = escHtml(fn);
+    const fn = r.filename, fnH = escHtml(fn);
     const card = document.createElement('div');
     card.className = 'card card-new';
     card.innerHTML =
       '<div class="card-top">' +
-        '<div class="pdf-icon">' +
-          '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>' +
-        '</div>' +
+        '<div class="pdf-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg></div>' +
         '<div class="card-info">' +
           '<div class="batch">Batch ' + escHtml(r.batch) + ' <span class="new-badge">new</span></div>' +
           '<div class="meta">' + escHtml(r.time_str) + ' &nbsp;//&nbsp; ' + escHtml(String(r.size_kb)) + ' KB</div>' +
@@ -550,40 +693,41 @@
       '</div>' +
       '<div class="card-actions">' +
         '<a class="btn btn-view" href="#" onclick="openPdf(\'/pdf/' + fnH + '\',\'' + fnH + '\');return false;">' +
-          '<svg viewBox="0 0 24 24"><path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>' +
-          'View' +
-        '</a>' +
+          '<svg viewBox="0 0 24 24"><path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>View</a>' +
         '<a class="btn btn-download" href="/download/' + fnH + '">' +
-          '<svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>' +
-          'Download' +
-        '</a>' +
+          '<svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>Download</a>' +
       '</div>';
     setTimeout(() => card.classList.remove('card-new'), 8000);
     return card;
   }
 
   function addNewCard(r) {
-    // Remove "no reports" placeholder if present
-    const empty = mainEl.querySelector('.empty');
+    // Switch to Reports tab so the new card is visible
+    document.querySelectorAll('.ctab').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelector('.ctab[data-panel="reports"]').classList.add('active');
+    reportsPanel.classList.add('active');
+
+    // Remove empty placeholder
+    const empty = reportsPanel.querySelector('.empty');
     if (empty) empty.remove();
 
-    // Find or create the day group
-    let group = mainEl.querySelector('.day-group[data-date="' + CSS.escape(r.date_str) + '"]');
+    // Find or create day group
+    let group = reportsPanel.querySelector('.day-group[data-date="' + CSS.escape(r.date_str) + '"]');
     if (!group) {
       group = document.createElement('div');
       group.className = 'day-group';
       group.dataset.date = r.date_str;
-      group.innerHTML =
-        '<div class="day-label">' + escHtml(r.date_str) + '</div>' +
-        '<div class="card-grid"></div>';
-      mainEl.insertBefore(group, mainEl.firstChild);
+      group.innerHTML = '<div class="day-label">' + escHtml(r.date_str) + '</div><div class="card-grid"></div>';
+      reportsPanel.insertBefore(group, reportsPanel.firstChild);
     }
-
     group.querySelector('.card-grid').insertBefore(createCard(r), group.querySelector('.card-grid').firstChild);
 
-    // Update badge count
     const n = (parseInt(totalBadge.textContent) || 0) + 1;
     totalBadge.textContent = n + ' report' + (n !== 1 ? 's' : '');
+    // Update Reports tab count
+    const rTab = document.querySelector('.ctab[data-panel="reports"] .ctab-cnt');
+    if (rTab) rTab.textContent = n;
 
     showToast('New report — Batch ' + r.batch);
   }
@@ -592,12 +736,92 @@
     const src = new EventSource('/events');
     src.onopen  = () => liveDot.classList.remove('off');
     src.onerror = () => liveDot.classList.add('off');
-    src.onmessage = ev => {
-      try { addNewCard(JSON.parse(ev.data)); } catch (_) {}
-    };
+    src.onmessage = ev => { try { addNewCard(JSON.parse(ev.data)); } catch (_) {} };
+  }
+  connectEvents();
+
+  /* ════ BACKUP & CLEAR ════ */
+  function bkpToken()      { return sessionStorage.getItem('maint_token') || ''; }
+  function setBkpToken(t)  { sessionStorage.setItem('maint_token', t); }
+  function clearBkpToken() { sessionStorage.removeItem('maint_token'); }
+
+  let bkpSrc = null;
+
+  function openBackup() {
+    document.getElementById('bkp-overlay').classList.add('active');
+    if (bkpToken()) showBkpConfirm(); else showBkpAuth();
+  }
+  function closeBackup() {
+    if (bkpSrc) { bkpSrc.close(); bkpSrc = null; }
+    document.getElementById('bkp-overlay').classList.remove('active');
+    document.getElementById('bkp-done-btn').style.display = 'none';
+    document.getElementById('bkp-out').textContent = '';
+  }
+  function showBkpAuth() {
+    document.getElementById('bkp-auth').style.display    = '';
+    document.getElementById('bkp-confirm').style.display = 'none';
+    document.getElementById('bkp-prog').style.display    = 'none';
+    document.getElementById('bkp-auth-input').value = '';
+    document.getElementById('bkp-auth-err').textContent = '';
+    setTimeout(() => document.getElementById('bkp-auth-input').focus(), 50);
+  }
+  function showBkpConfirm() {
+    document.getElementById('bkp-auth').style.display    = 'none';
+    document.getElementById('bkp-confirm').style.display = '';
+    document.getElementById('bkp-prog').style.display    = 'none';
+  }
+  function showBkpProgress() {
+    document.getElementById('bkp-auth').style.display    = 'none';
+    document.getElementById('bkp-confirm').style.display = 'none';
+    document.getElementById('bkp-prog').style.display    = '';
   }
 
-  connectEvents();
+  async function tryBkpAuth() {
+    const pw = document.getElementById('bkp-auth-input').value;
+    if (!pw) return;
+    document.getElementById('bkp-auth-err').textContent = 'CHECKING…';
+    try {
+      const r = await fetch('/api/console/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw }),
+      });
+      const j = await r.json();
+      if (r.ok && j.token) {
+        setBkpToken(j.token);
+        showBkpConfirm();
+      } else {
+        document.getElementById('bkp-auth-err').textContent = (j.error || 'ACCESS DENIED').toUpperCase();
+        document.getElementById('bkp-auth-input').value = '';
+        document.getElementById('bkp-auth-input').focus();
+      }
+    } catch (_) { document.getElementById('bkp-auth-err').textContent = 'CONNECTION ERROR'; }
+  }
+
+  document.getElementById('bkp-auth-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') tryBkpAuth();
+  });
+
+  function confirmBackup() {
+    showBkpProgress();
+    const outEl   = document.getElementById('bkp-out');
+    const doneBtn = document.getElementById('bkp-done-btn');
+    bkpSrc = new EventSource('/api/backup-and-clear?token=' + encodeURIComponent(bkpToken()));
+    bkpSrc.onmessage = ev => {
+      const line = ev.data;
+      outEl.textContent += line + '\n';
+      outEl.scrollTop = outEl.scrollHeight;
+      if (line.startsWith('[AUTH-REQUIRED]')) {
+        bkpSrc.close(); bkpSrc = null;
+        clearBkpToken(); showBkpAuth();
+        return;
+      }
+      if (line.startsWith('[DONE]')) { bkpSrc.close(); bkpSrc = null; doneBtn.style.display = ''; }
+    };
+    bkpSrc.onerror = () => {
+      if (bkpSrc) { outEl.textContent += '[CONNECTION ERROR]\n'; bkpSrc.close(); bkpSrc = null; doneBtn.style.display = ''; }
+    };
+  }
 </script>
 
 </body>
