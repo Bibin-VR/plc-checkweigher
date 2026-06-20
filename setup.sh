@@ -496,9 +496,38 @@ EOF
     chown "${PI_USER}:${PI_USER}" "${INSTALL_DIR}/plc_selfheal.service"
     ok "plc_selfheal.service  (auto-repair · cores 0-2 · Nice=10)"
 
+    # ── Report cleanup timer (daily 02:00 — zip + SMB push + delete >10d files) ─
+    cat > /etc/systemd/system/plc_cleanup.service << 'EOF'
+[Unit]
+Description=PLC Report Cleanup — zip + delete files older than 10 days, push backup to SMB
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/home/pi/plc_env/bin/python3 /home/pi/plc_checkweigher/report_cleanup.py
+StandardOutput=journal
+StandardError=journal
+EOF
+
+    cat > /etc/systemd/system/plc_cleanup.timer << 'EOF'
+[Unit]
+Description=PLC Report Cleanup — daily at 02:00
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
     systemctl daemon-reload
     systemctl enable plc_watcher.service plc_web.service plc_selfheal.service
+    systemctl enable plc_cleanup.timer
     ok "All services enabled — start automatically after reboot"
+    ok "plc_cleanup.timer    (daily 02:00 — archive + delete reports >10 days)"
 
     cp /etc/systemd/system/plc_watcher.service "${INSTALL_DIR}/plc_watcher.service"
     chown "${PI_USER}:${PI_USER}" "${INSTALL_DIR}/plc_watcher.service"
