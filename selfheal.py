@@ -370,11 +370,52 @@ def heal_disk_space():
     return ("disk_space", status, detail)
 
 
+def heal_report_dirs():
+    """Keep reports/logs and reports/health deletable by the web UI (user pi).
+
+    selfheal AND the `fix`/update CLI run as ROOT and create these dirs + write
+    log/health files into them. Without this, the pi-owned web "Backup & Clear"
+    cannot remove their contents — unlinking a file needs write permission on the
+    *containing directory*, not on the file — so the logs folder appears "locked"
+    and never clears. Ensure each dir is pi:pi + 0775 and re-own any root-written
+    files inside, so a clear can delete everything.
+    """
+    fixed = []
+    for sub in ("logs", "health"):
+        d = os.path.join(REPORTS_DIR, sub)
+        if not os.path.isdir(d):
+            continue
+        try:
+            st = os.stat(d)
+            changed = False
+            if st.st_uid != _pi_uid():
+                _chown_pi(d); changed = True
+            if (st.st_mode & 0o777) != 0o775:
+                os.chmod(d, 0o775); changed = True
+            # Re-own root-written files so the pi web UI can delete them too.
+            for name in os.listdir(d):
+                fp = os.path.join(d, name)
+                try:
+                    if os.stat(fp).st_uid != _pi_uid():
+                        _chown_pi(fp); changed = True
+                except OSError:
+                    pass
+            if changed:
+                fixed.append(sub)
+        except Exception as e:
+            return ("report_dirs", "FAILED", f"could not fix reports/{sub}: {e}")
+    if fixed:
+        return ("report_dirs", "HEALED",
+                f"reports/{'+'.join(fixed)} re-owned to pi:pi 0775 so the web "
+                f"Backup & Clear can delete them")
+    return None
+
+
 HEALERS = [
     heal_data_dir, heal_queue_files,
     heal_watcher, heal_web, heal_live_state,
     heal_networkmanager, heal_smb_config,
-    heal_disk_space,
+    heal_disk_space, heal_report_dirs,
 ]
 
 

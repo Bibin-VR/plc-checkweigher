@@ -760,6 +760,10 @@ fix)
 
     LOG_DIR="/home/pi/reports/logs"
     mkdir -p "$LOG_DIR" 2>/dev/null || true
+    # Keep the dir owned by pi so the (pi) web "Backup & Clear" can delete its
+    # contents — this CLI runs as root and would otherwise lock the folder.
+    chown pi:pi "$LOG_DIR" 2>/dev/null || true
+    chmod 775 "$LOG_DIR" 2>/dev/null || true
     # Build mode tag: "all" or hyphen-joined active scopes
     _LOG_MODES=""
     [[ $FIX_WIFI      -eq 1 ]] && _LOG_MODES="${_LOG_MODES:+${_LOG_MODES}-}wifi"
@@ -1359,6 +1363,8 @@ update)
     # ── Update report log (pushed to SMB at the end) ──────────────────────────
     ULOG_DIR="/home/pi/reports/logs"
     mkdir -p "$ULOG_DIR" 2>/dev/null || true
+    chown pi:pi "$ULOG_DIR" 2>/dev/null || true
+    chmod 775 "$ULOG_DIR" 2>/dev/null || true
     ULOG="${ULOG_DIR}/update_$(date '+%Y%m%d_%H%M%S').log"
     ulog() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$ULOG"; }
     ulog "=== Update started ==="
