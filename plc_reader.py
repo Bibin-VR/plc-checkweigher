@@ -164,10 +164,16 @@ def _read_live_batch_no(plc):
 
 
 def _read_live_pallet(plc):
-    """Read the PLC's current pallet counter (D3002), or None if unreadable."""
+    """Read the PLC's RAW pallet counter D3002 (32-bit), or None if unreadable.
+
+    RAW — not the floored/zero-crossing `sw_pallet` — so the resume comparison
+    matches the raw D3002 saved in batch_state. (sw_pallet floors to ≥1, so for
+    the first pallet sw_pallet=1 while D3002=0; comparing those would spuriously
+    finalize and split the pallet across PDFs.) Returns None on read failure so a
+    transient error can't be mistaken for "pallet 0" and trigger a finalize."""
     try:
-        _rd = lambda dev, n: plc.batchread_wordunits(headdevice=dev, readsize=n)
-        return int(regmap.read_value(_rd, "pallet"))
+        r = plc.batchread_wordunits(headdevice="D3002", readsize=2)
+        return (r[0] & 0xFFFF) | ((r[1] & 0xFFFF) << 16)
     except Exception:
         return None
 
@@ -248,19 +254,24 @@ def _resume_or_finalize(plc):
     saved_batch  = (state.get("batch_data") or {}).get("batch_no")
     saved_pallet = state.get("pallet_no",
                              (state.get("batch_data") or {}).get("pallet_no"))
+    saved_d3002  = state.get("d3002_raw")          # RAW D3002 saved with session
     live_batch   = _read_live_batch_no(plc)
-    live_pallet  = _read_live_pallet(plc)
+    live_d3002   = _read_live_pallet(plc)           # RAW D3002 now (or None)
 
+    # Compare like-for-like: RAW D3002 saved vs RAW D3002 live. A None on either
+    # side (read failure, or an old session saved before d3002_raw existed) means
+    # "can't prove it changed" → RESUME, never lose data. The per-item pallet
+    # boundary detection still splits the report the moment the pallet changes.
     batch_same  = (live_batch is None or saved_batch is None
                    or str(live_batch) == str(saved_batch))
-    pallet_same = (live_pallet is None or saved_pallet is None
-                   or int(live_pallet) == int(saved_pallet))
+    pallet_same = (live_d3002 is None or saved_d3002 is None
+                   or int(live_d3002) == int(saved_d3002))
     same = batch_same and pallet_same
 
     if not same:
-        print(f"  [resume] saved (batch {saved_batch}, pallet {saved_pallet}) != "
-              f"live (batch {live_batch}, pallet {live_pallet}) — finalizing the "
-              f"completed pallet, starting fresh")
+        print(f"  [resume] saved (batch {saved_batch}, pallet {saved_pallet}, "
+              f"D3002 {saved_d3002}) != live (batch {live_batch}, D3002 {live_d3002}) "
+              f"— finalizing the completed pallet, starting fresh")
         _finalize_session(state, recovered=False)
         return None
 
@@ -757,7 +768,8 @@ def main():
                     "csv_path":   csv_path,
                     "batch_data": {k: v for k, v in batch_data.items()
                                    if isinstance(v, (str, int, float, bool, type(None)))},
-                    "pallet_no":  snap_pallet,   # resume key: same pallet → continue
+                    "pallet_no":  snap_pallet,    # display pallet (sw_pallet, ≥1)
+                    "d3002_raw":  snap_d3002,     # RAW D3002 — resume key (same pallet → continue)
                     "start_dt":   batch_start_dt,
                     "item_count": item_count,
                     "accepted":   accepted,
