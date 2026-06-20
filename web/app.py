@@ -640,31 +640,44 @@ def api_backup_and_clear():
 
     def generate():
         import zipfile as _zmod
+        import glob    as _glob
         try:
-            # ── 1. Collect all files ────────────────────────────────────────
-            all_files = []
+            # ── 1. Collect report files ─────────────────────────────────────
+            report_files = []
             for dp, _, fnames in os.walk(REPORTS_DIR):
                 for fn in fnames:
-                    all_files.append(os.path.join(dp, fn))
+                    report_files.append(os.path.join(dp, fn))
 
-            if not all_files:
-                yield "data: Reports directory is already empty — nothing to backup.\n\n"
+            # ── 2. Collect app log files to back up and clear ───────────────
+            # delivery_sent.log is a delivery ledger — preserve it.
+            log_candidates = [
+                os.path.join(_PROJECT_ROOT, "fix.log"),
+            ] + sorted(_glob.glob(
+                os.path.join(_PROJECT_ROOT, "data", "event_journal.jsonl*")
+            ))
+            log_files = [(p, "app_logs/" + os.path.basename(p))
+                         for p in log_candidates if os.path.isfile(p)]
+
+            if not report_files and not log_files:
+                yield "data: Nothing to backup — reports and logs are already empty.\n\n"
                 yield "data: [DONE] exit=0\n\n"
                 return
 
-            # ── 2. Create zip archive in /tmp ───────────────────────────────
+            # ── 3. Create zip archive in /tmp ───────────────────────────────
             ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
             zip_name = f"reports_backup_{ts}.zip"
             zip_path = f"/tmp/{zip_name}"
 
-            yield f"data: Archiving {len(all_files)} file(s) → {zip_name}…\n\n"
+            yield f"data: Archiving {len(report_files)} report(s) + {len(log_files)} log(s) → {zip_name}…\n\n"
             with _zmod.ZipFile(zip_path, "w", _zmod.ZIP_DEFLATED) as zf:
-                for fp in all_files:
+                for fp in report_files:
                     zf.write(fp, os.path.relpath(fp, REPORTS_DIR))
+                for fp, arcname in log_files:
+                    zf.write(fp, arcname)
             zip_kb = round(os.path.getsize(zip_path) / 1024, 1)
             yield f"data: Archive ready — {zip_kb} KB\n\n"
 
-            # ── 3. Upload to SMB backups/ subfolder ─────────────────────────
+            # ── 4. Upload to SMB backups/ subfolder ─────────────────────────
             if not _SMB_HOST or not _SMB_SHARE:
                 yield "data: [ERROR] SMB not configured — set SMB_HOST/SHARE in smb_config.py\n\n"
                 yield "data: [DONE] exit=1\n\n"
@@ -678,7 +691,6 @@ def api_backup_and_clear():
             dest   = f"{bkpdir}/{zip_name}"
 
             yield f"data: Creating SMB folder /{bkpdir}/…\n\n"
-            # mkdir is silent on "already exists" errors
             subprocess.run(
                 ["smbclient", share, "-U", auth, "-c", f'mkdir "{bkpdir}"'],
                 capture_output=True, text=True, timeout=10,
@@ -701,7 +713,7 @@ def api_backup_and_clear():
 
             yield f"data: ✓ Backup uploaded to SMB\n\n"
 
-            # ── 4. Delete all local files & subdirs ─────────────────────────
+            # ── 5. Delete all report files & subdirs ────────────────────────
             yield f"data: Clearing {REPORTS_DIR}…\n\n"
             deleted = 0
             for dp, dns, fnames in os.walk(REPORTS_DIR, topdown=False):
@@ -716,8 +728,21 @@ def api_backup_and_clear():
                         os.rmdir(dp)
                     except OSError:
                         pass
+            yield f"data: ✓ Deleted {deleted} report file(s)\n\n"
 
-            yield f"data: ✓ Deleted {deleted} file(s) from Pi\n\n"
+            # ── 6. Truncate app log files ───────────────────────────────────
+            # Truncate rather than delete so open handles in running services
+            # remain valid; services recreate content on their next write.
+            yield "data: Clearing app logs…\n\n"
+            cleared = 0
+            for fp, _ in log_files:
+                try:
+                    open(fp, "w").close()
+                    cleared += 1
+                except OSError:
+                    pass
+            yield f"data: ✓ Cleared {cleared} log file(s)\n\n"
+
             yield "data: [DONE] exit=0\n\n"
 
         except Exception as exc:
