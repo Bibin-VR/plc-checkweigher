@@ -55,6 +55,9 @@ def find_old_files(root: Path, max_days: int) -> list:
             continue
         if f.suffix.lower() == ".zip":
             continue          # never re-zip existing backup archives
+        if f.suffix.lower() == ".csv":
+            continue          # in-progress batch session CSV — unfinished data,
+                              # self-deletes when its pallet report is built
         try:
             if f.stat().st_mtime < cutoff:
                 old.append(f)

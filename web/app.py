@@ -792,9 +792,15 @@ def api_backup_and_clear():
         import glob    as _glob
         try:
             # ── 1. Collect report files ─────────────────────────────────────
+            # Skip .csv — the in-progress batch's session CSV holds unfinished
+            # data and is deleted automatically when its pallet report is built.
+            # Never archive or clear it (matches the archive view, which also
+            # treats .csv as non-report working data).
             report_files = []
             for dp, _, fnames in os.walk(REPORTS_DIR):
                 for fn in fnames:
+                    if fn.lower().endswith(".csv"):
+                        continue
                     report_files.append(os.path.join(dp, fn))
 
             # ── 2. Collect app log files to back up and clear ───────────────
@@ -867,6 +873,8 @@ def api_backup_and_clear():
             deleted = 0
             for dp, dns, fnames in os.walk(REPORTS_DIR, topdown=False):
                 for fn in fnames:
+                    if fn.lower().endswith(".csv"):
+                        continue   # keep in-progress batch CSV (unfinished data)
                     try:
                         os.unlink(os.path.join(dp, fn))
                         deleted += 1
@@ -874,7 +882,7 @@ def api_backup_and_clear():
                         pass
                 if os.path.relpath(dp, REPORTS_DIR) != ".":
                     try:
-                        os.rmdir(dp)
+                        os.rmdir(dp)   # only succeeds if now empty (no CSV here)
                     except OSError:
                         pass
             yield f"data: ✓ Deleted {deleted} report file(s)\n\n"
