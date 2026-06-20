@@ -487,7 +487,7 @@
         <div class="day-label">{{ date }}</div>
         <div class="card-grid">
           {% for r in reports %}
-          <div class="card">
+          <div class="card" data-relpath="{{ r.name }}">
             <div class="card-top">
               <div class="pdf-icon">
                 <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg>
@@ -525,7 +525,7 @@
     {% else %}
     <div class="file-table">
       {% for f in files %}
-      <div class="file-row">
+      <div class="file-row" data-relpath="{{ f.relpath }}">
         <div class="file-ext ext-{{ f.ext }}">{{ f.ext }}</div>
         <div class="file-info">
           <div class="fname" title="{{ f.name }}">{{ f.name }}</div>
@@ -661,7 +661,7 @@
     });
   });
 
-  /* ── SSE — live new-PDF cards ── */
+  /* ── SSE — real-time add / remove for all files ── */
   const liveDot        = document.getElementById('live-dot');
   const totalBadge     = document.getElementById('total-badge');
   const toastContainer = document.getElementById('toast-container');
@@ -671,22 +671,44 @@
                     .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
-  function showToast(msg) {
+  function showToast(msg, color) {
     const t = document.createElement('div');
-    t.className = 'toast'; t.textContent = msg;
+    t.className = 'toast';
+    t.style.borderLeftColor = color || 'var(--red)';
+    t.textContent = msg;
     toastContainer.appendChild(t);
     setTimeout(() => t.remove(), 4500);
   }
 
+  /* ── helpers ── */
+  function pdfCount() {
+    return reportsPanel.querySelectorAll('.card').length;
+  }
+  function updateReportBadge() {
+    const n = pdfCount();
+    totalBadge.textContent = n + ' report' + (n !== 1 ? 's' : '');
+    const rTab = document.querySelector('.ctab[data-panel="reports"] .ctab-cnt');
+    if (rTab) rTab.textContent = n;
+  }
+  function updateSubdirBadge(panelId) {
+    const panel = document.getElementById('panel-' + panelId);
+    if (!panel) return;
+    const n = panel.querySelectorAll('.file-row').length;
+    const tab = document.querySelector('.ctab[data-panel="' + panelId + '"] .ctab-cnt');
+    if (tab) tab.textContent = n;
+  }
+
+  /* ── add PDF card ── */
   function createCard(r) {
-    const fn = r.filename, fnH = escHtml(fn);
+    const fn = r.filename || r.name, fnH = escHtml(fn);
     const card = document.createElement('div');
     card.className = 'card card-new';
+    card.dataset.relpath = fn;
     card.innerHTML =
       '<div class="card-top">' +
         '<div class="pdf-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z"/></svg></div>' +
         '<div class="card-info">' +
-          '<div class="batch">Batch ' + escHtml(r.batch) + ' <span class="new-badge">new</span></div>' +
+          '<div class="batch">Batch ' + escHtml(r.batch||'—') + ' <span class="new-badge">new</span></div>' +
           '<div class="meta">' + escHtml(r.time_str) + ' &nbsp;//&nbsp; ' + escHtml(String(r.size_kb)) + ' KB</div>' +
           '<div class="fname" title="' + fnH + '">' + fnH + '</div>' +
         '</div>' +
@@ -701,18 +723,13 @@
     return card;
   }
 
-  function addNewCard(r) {
-    // Switch to Reports tab so the new card is visible
+  function addPdfCard(r) {
     document.querySelectorAll('.ctab').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     document.querySelector('.ctab[data-panel="reports"]').classList.add('active');
     reportsPanel.classList.add('active');
-
-    // Remove empty placeholder
     const empty = reportsPanel.querySelector('.empty');
     if (empty) empty.remove();
-
-    // Find or create day group
     let group = reportsPanel.querySelector('.day-group[data-date="' + CSS.escape(r.date_str) + '"]');
     if (!group) {
       group = document.createElement('div');
@@ -722,21 +739,102 @@
       reportsPanel.insertBefore(group, reportsPanel.firstChild);
     }
     group.querySelector('.card-grid').insertBefore(createCard(r), group.querySelector('.card-grid').firstChild);
-
-    const n = (parseInt(totalBadge.textContent) || 0) + 1;
-    totalBadge.textContent = n + ' report' + (n !== 1 ? 's' : '');
-    // Update Reports tab count
-    const rTab = document.querySelector('.ctab[data-panel="reports"] .ctab-cnt');
-    if (rTab) rTab.textContent = n;
-
-    showToast('New report — Batch ' + r.batch);
+    updateReportBadge();
+    showToast('New report — Batch ' + (r.batch||'—'));
   }
 
+  /* ── add subdir file row ── */
+  function addFileRow(r) {
+    const panelId = r.subdir.replace(/\//g,'_').replace(/ /g,'_');
+    let panel = document.getElementById('panel-' + panelId);
+    if (!panel) {
+      // Panel doesn't exist yet — create tab + panel on the fly
+      const tab = document.createElement('button');
+      tab.className = 'ctab';
+      tab.dataset.panel = panelId;
+      tab.innerHTML = '<span class="ctab-ico">▶</span> ' + escHtml(r.subdir) + '/ <span class="ctab-cnt">0</span>';
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.ctab').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        panel.classList.add('active');
+      });
+      document.getElementById('ctab-bar').insertBefore(tab, document.getElementById('ctab-bar').lastElementChild);
+      panel = document.createElement('div');
+      panel.id = 'panel-' + panelId;
+      panel.className = 'tab-panel';
+      panel.innerHTML = '<div class="file-table"></div>';
+      document.querySelector('main').appendChild(panel);
+    }
+    let table = panel.querySelector('.file-table');
+    if (!table) {
+      panel.innerHTML = '<div class="file-table"></div>';
+      table = panel.querySelector('.file-table');
+    }
+    const empty = panel.querySelector('.empty');
+    if (empty) empty.remove();
+    const fnH = escHtml(r.name), rel = escHtml(r.relpath);
+    const row = document.createElement('div');
+    row.className = 'file-row';
+    row.dataset.relpath = r.relpath;
+    row.innerHTML =
+      '<div class="file-ext ext-' + escHtml(r.ext) + '">' + escHtml(r.ext) + '</div>' +
+      '<div class="file-info">' +
+        '<div class="fname" title="' + fnH + '">' + fnH + '</div>' +
+        '<div class="fmeta">' + escHtml(r.date_str) + ' &nbsp;·&nbsp; ' + escHtml(r.time_str) + ' &nbsp;·&nbsp; ' + escHtml(String(r.size_kb)) + ' KB</div>' +
+      '</div>' +
+      '<a class="file-dl" href="/file/' + rel + '">' +
+        '<svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>Download</a>';
+    table.insertBefore(row, table.firstChild);
+    updateSubdirBadge(panelId);
+    showToast(r.subdir + '/ — new file: ' + r.name, 'var(--ylw)');
+  }
+
+  /* ── remove any file ── */
+  function removeFile(r) {
+    const rel = r.relpath;
+    // Match by data-relpath (cards use filename, rows use full relpath)
+    const el = document.querySelector('[data-relpath="' + CSS.escape(rel) + '"]')
+            || document.querySelector('[data-relpath="' + CSS.escape(r.name) + '"]');
+    if (!el) return;
+
+    if (el.classList.contains('card')) {
+      // PDF card — clean up empty day-group after removal
+      const grid  = el.closest('.card-grid');
+      const group = el.closest('.day-group');
+      el.remove();
+      if (grid && grid.children.length === 0) {
+        if (group) group.remove();
+      }
+      if (!reportsPanel.querySelector('.card')) {
+        reportsPanel.innerHTML = '<div class="empty">No reports on file<br>Entries appear after each production batch</div>';
+      }
+      updateReportBadge();
+      showToast('Deleted: ' + r.name, 'var(--faint)');
+    } else {
+      // Subdir file row
+      const panelId = r.subdir.replace(/\//g,'_').replace(/ /g,'_');
+      const table = el.closest('.file-table');
+      el.remove();
+      if (table && table.children.length === 0) {
+        const panel = document.getElementById('panel-' + panelId);
+        if (panel) panel.innerHTML = '<div class="empty">No files in ' + escHtml(r.subdir) + '/</div>';
+      }
+      updateSubdirBadge(panelId);
+      showToast('Deleted: ' + r.name, 'var(--faint)');
+    }
+  }
+
+  /* ── SSE connection ── */
   function connectEvents() {
     const src = new EventSource('/events');
     src.onopen  = () => liveDot.classList.remove('off');
     src.onerror = () => liveDot.classList.add('off');
-    src.onmessage = ev => { try { addNewCard(JSON.parse(ev.data)); } catch (_) {} };
+    // named events from the server
+    src.addEventListener('add',    ev => { try { const d = JSON.parse(ev.data); d.is_pdf && !d.subdir ? addPdfCard(d) : addFileRow(d); } catch(_){} });
+    src.addEventListener('remove', ev => { try { removeFile(JSON.parse(ev.data)); } catch(_){} });
+    // backward-compat: unnamed message (shouldn't happen with new server, just guard)
+    src.onmessage = ev => { try { addPdfCard(JSON.parse(ev.data)); } catch(_){} };
   }
   connectEvents();
 

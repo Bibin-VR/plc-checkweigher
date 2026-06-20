@@ -243,33 +243,80 @@ def live_events():
     )
 
 
+def _scan_reports_tree() -> dict:
+    """Return {relpath: mtime} for every visible, non-csv file under REPORTS_DIR."""
+    result = {}
+    try:
+        for dp, _, fnames in os.walk(REPORTS_DIR):
+            for fn in fnames:
+                if fn.startswith(".") or fn.lower().endswith(".csv"):
+                    continue
+                fp  = os.path.join(dp, fn)
+                rel = os.path.relpath(fp, REPORTS_DIR)
+                try:
+                    result[rel] = os.path.getmtime(fp)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return result
+
+
 @app.route("/events")
 def events():
-    """SSE stream — sends a JSON event each time a new PDF appears in REPORTS_DIR."""
+    """SSE stream — emits named 'add' / 'remove' events for any file change in REPORTS_DIR.
+
+    add    → new file detected (PDF or subdir file)
+    remove → file no longer present (deleted by cleanup, backup-and-clear, etc.)
+    """
     def generate():
         os.makedirs(REPORTS_DIR, exist_ok=True)
-        known = {f for f in os.listdir(REPORTS_DIR) if f.endswith(".pdf")}
+        known = _scan_reports_tree()
         yield ": connected\n\n"
         tick = 0
         while True:
             time.sleep(2)
             tick += 1
             try:
-                current = {f for f in os.listdir(REPORTS_DIR) if f.endswith(".pdf")}
-                new_files = sorted(
-                    current - known,
-                    key=lambda f: os.path.getmtime(os.path.join(REPORTS_DIR, f)),
-                )
-                for filename in new_files:
+                current = _scan_reports_tree()
+
+                # ── New files ────────────────────────────────────────────────
+                for rel in sorted(set(current) - set(known)):
+                    fp     = os.path.join(REPORTS_DIR, rel)
+                    fname  = os.path.basename(rel)
+                    subdir = os.path.dirname(rel)   # "" for root PDFs
+                    ext    = os.path.splitext(fname)[1].lower().lstrip(".") or "file"
                     try:
-                        r = parse_report(filename)
-                        payload = {k: r[k] for k in
-                                   ("filename", "batch", "date_str", "time_str", "size_kb")}
-                        yield f"data: {json.dumps(payload)}\n\n"
+                        st = os.stat(fp)
+                        dt = datetime.fromtimestamp(st.st_mtime)
+                        info = {
+                            "relpath"  : rel,
+                            "name"     : fname,
+                            "subdir"   : subdir,
+                            "ext"      : ext,
+                            "is_pdf"   : ext == "pdf",
+                            "size_kb"  : round(st.st_size / 1024, 1),
+                            "date_str" : dt.strftime("%d %b %Y"),
+                            "time_str" : dt.strftime("%H:%M:%S"),
+                        }
+                        if ext == "pdf" and not subdir:
+                            info["batch"] = parse_report(fname).get("batch", "—")
+                            info["filename"] = fname   # kept for backward-compat
+                        yield f"event: add\ndata: {json.dumps(info)}\n\n"
                     except Exception:
                         pass
+
+                # ── Deleted files ────────────────────────────────────────────
+                for rel in sorted(set(known) - set(current)):
+                    payload = {
+                        "relpath": rel,
+                        "name"   : os.path.basename(rel),
+                        "subdir" : os.path.dirname(rel),
+                    }
+                    yield f"event: remove\ndata: {json.dumps(payload)}\n\n"
+
                 known = current
-                if tick % 15 == 0:          # keepalive every 30 s
+                if tick % 15 == 0:      # keepalive every 30 s
                     yield ": keepalive\n\n"
             except GeneratorExit:
                 return
