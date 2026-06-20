@@ -96,6 +96,21 @@
       white-space: nowrap;
     }
     .btn-backup:hover { background: var(--ylw); color: var(--sub); }
+    .btn-current {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      padding: 6px 14px;
+      background: var(--panel);
+      color: var(--grn);
+      border: 1px solid var(--grn);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-current:hover:not(:disabled) { background: var(--grn); color: var(--sub); }
+    .btn-current:disabled { opacity: .5; cursor: wait; }
 
     /* ════ PAGE NAV TABS (Ops / Archive) ════ */
     .nav-tab-bar {
@@ -449,6 +464,7 @@
       <span class="live-label">Link</span>
     </div>
     <span class="badge" id="total-badge">{{ total }} report{{ 's' if total != 1 else '' }}</span>
+    <button class="btn-current" id="btn-current" onclick="getCurrentData()">⬇ Get Current Data</button>
     <button class="btn-backup" onclick="openBackup()">⬆ Backup &amp; Clear</button>
   </div>
 </header>
@@ -678,6 +694,31 @@
     t.textContent = msg;
     toastContainer.appendChild(t);
     setTimeout(() => t.remove(), 4500);
+  }
+
+  /* Get Current Data — generate + send an interim PDF of the in-progress pallet
+     WITHOUT breaking the reader's running sequence. The new INTERIM file arrives
+     on its own via the /events SSE 'add' stream, so no manual refresh is needed. */
+  async function getCurrentData() {
+    const btn = document.getElementById('btn-current');
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = '⏳ Generating…';
+    try {
+      const r = await fetch('/api/report/current', { method: 'POST' });
+      const j = await r.json();
+      if (r.ok && j.ok) {
+        showToast('Current data — batch ' + j.batch_no + ' pallet ' +
+                  j.pallet_no + ' (' + j.items + ' items) → sent', 'var(--grn)');
+      } else {
+        showToast(j.error || 'No current data to report', 'var(--ylw)');
+      }
+    } catch (_) {
+      showToast('Get Current Data — connection error', 'var(--red)');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
   }
 
   /* ── helpers ── */

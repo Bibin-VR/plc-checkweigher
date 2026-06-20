@@ -19,7 +19,7 @@ import time
 from datetime import datetime
 from pymcprotocol import Type3E
 from plc_report import build_pdf, PDF_DIR
-from pdf_push import push_pdf_sync
+from pdf_push import push_pdf_sync, push_pdf_async
 import regmap
 import eventlog
 
@@ -163,9 +163,22 @@ def _read_live_batch_no(plc):
         return None
 
 
-def _finalize_recovered(state):
-    """Build + push a RECOVERED PDF for an interrupted batch that will NOT be
-    resumed (a different batch has started)."""
+def _read_live_pallet(plc):
+    """Read the PLC's current pallet counter (D3002), or None if unreadable."""
+    try:
+        _rd = lambda dev, n: plc.batchread_wordunits(headdevice=dev, readsize=n)
+        return int(regmap.read_value(_rd, "pallet"))
+    except Exception:
+        return None
+
+
+def _finalize_session(state, recovered: bool = False):
+    """Build + push the PDF for a saved pallet session that will NOT be resumed
+    (its pallet — or batch — has changed, so the pallet is complete).
+
+    recovered=False : a normal completed-pallet report (one PDF per pallet).
+    recovered=True  : tagged `_RECOVERED` (power-cut interruption, may be partial).
+    """
     csv_path = state.get("csv_path", "")
     if not csv_path or not os.path.exists(csv_path):
         _clear_batch_state()
@@ -179,37 +192,50 @@ def _finalize_recovered(state):
         _clear_batch_state()
         return
     batch_data = state.get("batch_data", {})
-    ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
-    name = f"report_batch{batch_data.get('batch_no', 0)}_{ts}_RECOVERED.pdf"
-    path = os.path.join(PDF_DIR, name)
+    pallet_no  = batch_data.get("pallet_no")
+    ts     = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix = "_RECOVERED" if recovered else ""
+    name   = f"report_batch{batch_data.get('batch_no', 0)}_{ts}{suffix}.pdf"
+    path   = os.path.join(PDF_DIR, name)
     try:
         build_pdf(batch_data, rows, path,
                   start_dt=state.get("start_dt", ""),
                   stop_dt=rows[-1].get("datetime", ""))
-        print(f"  [recover] finalized interrupted batch → {name} ({len(rows)} items)")
-        eventlog.log_incident(
-            "batch_continuation", "HEALED",
-            cause=f"Power restored on a NEW batch — interrupted batch "
-                  f"{batch_data.get('batch_no')} was not resumed",
-            action=f"Finalized the interrupted batch as a recovered report "
-                   f"({len(rows)} item(s))",
-            result=f"Recovered report {name}; new batch starts fresh")
+        print(f"  [finalize] pallet {pallet_no} complete → {name} ({len(rows)} items)")
+        if recovered:
+            eventlog.log_incident(
+                "batch_continuation", "HEALED",
+                cause=f"Restarted on a NEW pallet/batch — interrupted batch "
+                      f"{batch_data.get('batch_no')} pallet {pallet_no} was not resumed",
+                action=f"Finalized the interrupted pallet as a recovered report "
+                       f"({len(rows)} item(s))",
+                result=f"Recovered report {name}; new pallet starts fresh")
         eventlog.log_report(name, len(rows),
-                            batch_no=batch_data.get("batch_no"), recovered=True)
+                            batch_no=batch_data.get("batch_no"), recovered=recovered)
         push_pdf_async(path)
         os.remove(csv_path)
     except Exception as e:
-        print(f"  [recover] finalize failed: {e} — CSV kept for manual review")
+        print(f"  [finalize] failed: {e} — CSV kept for manual review")
     _clear_batch_state()
 
 
-def _resolve_interrupted_batch(plc):
+def _resume_or_finalize(plc):
     """
-    Decide resume-vs-new after a power cut.
+    Decide RESUME-vs-FINALIZE when the reader (re)starts with a saved session.
 
-    Returns a dict of restored state to CONTINUE the interrupted batch, or None
-    to start fresh (after finalizing the old batch as a recovered report when a
-    different batch has started).
+    A pallet's data is kept on disk across every machine STOP (the report is NOT
+    generated on idle). When the machine runs again this compares the live PLC
+    (batch_no, pallet) with the saved one:
+
+      • SAME batch AND SAME pallet  → RESUME — reopen the CSV in append mode and
+        carry the running serial/counters so the sequence stays continuous.
+      • DIFFERENT pallet or batch   → the saved pallet is complete: finalize it as
+        one PDF, then start fresh on the new pallet.
+
+    (If the live values can't be read, RESUME — never lose data; the per-item
+    pallet-boundary detection still splits the report when the pallet changes.)
+
+    Returns a dict of restored state to CONTINUE, or None to start fresh.
     """
     state = _load_batch_state()
     if not state or not state.get("active"):
@@ -219,37 +245,45 @@ def _resolve_interrupted_batch(plc):
         _clear_batch_state()
         return None
 
-    saved_batch = (state.get("batch_data") or {}).get("batch_no")
-    live_batch  = _read_live_batch_no(plc)
-    same = (live_batch is not None and saved_batch is not None
-            and str(live_batch) == str(saved_batch))
+    saved_batch  = (state.get("batch_data") or {}).get("batch_no")
+    saved_pallet = state.get("pallet_no",
+                             (state.get("batch_data") or {}).get("pallet_no"))
+    live_batch   = _read_live_batch_no(plc)
+    live_pallet  = _read_live_pallet(plc)
+
+    batch_same  = (live_batch is None or saved_batch is None
+                   or str(live_batch) == str(saved_batch))
+    pallet_same = (live_pallet is None or saved_pallet is None
+                   or int(live_pallet) == int(saved_pallet))
+    same = batch_same and pallet_same
 
     if not same:
-        print(f"  [recover] interrupted batch {saved_batch} != live batch "
-              f"{live_batch} — finalizing old batch, starting new")
-        _finalize_recovered(state)
+        print(f"  [resume] saved (batch {saved_batch}, pallet {saved_pallet}) != "
+              f"live (batch {live_batch}, pallet {live_pallet}) — finalizing the "
+              f"completed pallet, starting fresh")
+        _finalize_session(state, recovered=False)
         return None
 
-    # ── RESUME the same batch — continue the same CSV / report ───────────────
+    # ── RESUME the same (batch, pallet) — continue the same CSV / sequence ────
     event_rows = _csv_event_rows(csv_path)
     try:
         f = open(csv_path, "a", newline="")      # append — keep rows + header
         w = csv.writer(f)
     except OSError as e:
-        print(f"  [recover] cannot reopen CSV ({e}) — finalizing instead")
-        _finalize_recovered(state)
+        print(f"  [resume] cannot reopen CSV ({e}) — finalizing instead")
+        _finalize_session(state, recovered=False)
         return None
 
     batch_data = state.get("batch_data", {})
     pallet     = int(batch_data.get("pallet_no", 0) or 0)
-    print(f"  [recover] RESUMING batch {saved_batch} — {len(event_rows)} item(s) "
-          f"carried over from before the power cut")
+    print(f"  [resume] RESUMING batch {saved_batch} pallet {pallet} — "
+          f"{len(event_rows)} item(s) carried over; serial sequence continues")
     eventlog.log_incident(
         "batch_continuation", "HEALED",
-        cause=f"Power restored and the SAME batch {saved_batch} resumed",
-        action=f"Continued the existing report — {len(event_rows)} pre-cut "
-               f"item(s) carried over; new items append to the same batch",
-        result="Single continuous report — no fragmentation")
+        cause=f"Machine ran again on the SAME batch {saved_batch} pallet {pallet}",
+        action=f"Continued the existing report — {len(event_rows)} prior "
+               f"item(s) carried over; new items append to the same pallet",
+        result="Single continuous report per pallet — no fragmentation")
     return {
         "csv_path":       csv_path,
         "csv_file":       f,
@@ -467,9 +501,9 @@ def main():
         print(f"CSV log     : {path}")
         return path, f, w
 
-    # Power-failure continuation: resume the same batch if it is restarting,
-    # else finalize the interrupted one and begin fresh.
-    resume = _resolve_interrupted_batch(plc)
+    # Pallet continuation: resume the same (batch, pallet) if it is restarting
+    # after an idle/stop, else finalize the completed pallet and begin fresh.
+    resume = _resume_or_finalize(plc)
     if resume:
         csv_path       = resume["csv_path"]
         csv_file       = resume["csv_file"]
@@ -534,25 +568,34 @@ def main():
         batch_start_dt = ""
         csv_path, csv_file, csv_writer = open_csv()
 
-    def end_batch(reason_str: str):
-        print(f"\nBatch ended ({reason_str}) — {item_count} items "
-              f"(Accept: {accepted}  Reject: {rejected})")
-        csv_file.close()
-        stop_dt = _now_str()
+    def pause_batch(reason_str: str):
+        """Machine went idle — DO NOT generate a PDF. Flush + close the CSV and
+        leave the saved session on disk so the next run RESUMES the same pallet
+        sequence (or finalizes it once the pallet number changes). One PDF per
+        completed pallet; an interim PDF can be pulled on demand from the archive
+        page's 'Get Current Data' button without breaking the sequence."""
+        try:
+            csv_file.flush()
+            os.fsync(csv_file.fileno())
+            csv_file.close()
+        except Exception:
+            pass
         if batch_data and event_rows:
-            if gen_batch_pdf(batch_data, event_rows,
-                             start_dt=batch_start_dt, stop_dt=stop_dt):
-                os.remove(csv_path)
-                _clear_batch_state()
-            else:
-                print(f"  [CSV] Kept (PDF failed): {csv_path}")
+            # batch_state.json was fsync'd after the last item (active=True). Keep
+            # it + the CSV intact so the pallet can be resumed. No PDF on idle.
+            print(f"\nBatch paused ({reason_str}) — {item_count} item(s) held "
+                  f"(Accept: {accepted}  Reject: {rejected}); pallet {last_pallet} "
+                  f"still open. PDF deferred until the pallet number changes or "
+                  f"'Get Current Data' is pressed.")
         else:
-            print("  [PDF] No data — nothing to report.")
+            # Nothing recorded this run — don't leave an empty session behind.
             try:
                 os.remove(csv_path)
             except OSError:
                 pass
             _clear_batch_state()
+            print(f"\nBatch paused ({reason_str}) — no items recorded; "
+                  f"session discarded.")
 
     try:
         while True:
@@ -573,7 +616,8 @@ def main():
                 m102, m260, m262, m200 = read_bits(plc)
             except Exception as e:
                 # M102 could not be read — PLC disconnected or timed out.
-                print(f"[reader] PLC lost ({type(e).__name__}: {e}) — ending batch + reconnecting ...")
+                print(f"[reader] PLC lost ({type(e).__name__}: {e}) — pausing "
+                      f"session + returning to watcher ...")
                 _write_kiosk({"ts": time.time(), "source": "reader",
                                "plc_connected": False, "running": False,
                                "status": "OFFLINE", "item_event": None})
@@ -582,38 +626,12 @@ def main():
                 except Exception:
                     pass
 
-                # Close batch before reconnecting — machine may have stopped.
-                end_batch("PLC disconnect")
-
-                plc = connect()
-                first_poll = True
-                prev_m102 = prev_m260 = prev_m262 = prev_m200 = 0
-                pending_item_event = None
-                item_event_ttl = 0
-                item_count = accepted = rejected = 0
-                last_pallet = None
-                batch_start_dt = ""
-                sw_pallet = None
-                prev_d3300 = None
-                batch_data = {}
-                event_rows = []
-                last_status = "IDLE"
-
-                # After reconnect: check if machine is actually still running.
-                # If M102=0 now, the reader should exit so the watcher
-                # can resume monitoring for the next START.
-                try:
-                    m102_check = plc.batchread_bitunits(headdevice="M102", readsize=1)[0]
-                except Exception:
-                    m102_check = 0
-
-                if not m102_check:
-                    print("[reader] Machine stopped — returning to watcher.")
-                    return   # watcher will reconnect and wait for next START
-                else:
-                    print("[reader] Machine still running after reconnect — continuing.")
-                    csv_path, csv_file, csv_writer = open_csv()
-                    continue
+                # Pause (keep CSV + state for resume) and hand back to the watcher.
+                # It reconnects and relaunches the reader on the next run, which
+                # RESUMES this same pallet via _resume_or_finalize — no data is lost
+                # and no PDF is generated on a disconnect.
+                pause_batch("PLC disconnect")
+                return
 
             # On first successful read after startup or reconnect, just capture
             # the current bit state as baseline — do not fire any edges.
@@ -637,7 +655,7 @@ def main():
                                "machine": batch_data.get("machine", "CW-2400") or "CW-2400",
                                "pallet_no": batch_data.get("pallet_no", 0),
                                "lot_no": batch_data.get("lot_no", 0)})
-                end_batch("STOP button")
+                pause_batch("STOP button")
                 return
 
             # Rising edge on any result bit
@@ -739,6 +757,7 @@ def main():
                     "csv_path":   csv_path,
                     "batch_data": {k: v for k, v in batch_data.items()
                                    if isinstance(v, (str, int, float, bool, type(None)))},
+                    "pallet_no":  snap_pallet,   # resume key: same pallet → continue
                     "start_dt":   batch_start_dt,
                     "item_count": item_count,
                     "accepted":   accepted,
@@ -829,7 +848,9 @@ def main():
             time.sleep(max(0.0, BIT_POLL - elapsed))
 
     except KeyboardInterrupt:
-        end_batch("stop signal / shutdown")
+        # Shutdown / reboot — pause (persist), never finalize. The pallet resumes
+        # on the next run, or is pulled on demand via 'Get Current Data'.
+        pause_batch("stop signal / shutdown")
 
 
 if __name__ == "__main__":

@@ -60,6 +60,19 @@ try:
 except Exception:                       # pragma: no cover - journal optional
     eventlog = None
 
+# Interim "Get Current Data" report — build a PDF from the in-progress CSV and
+# push it, WITHOUT touching the reader's running sequence (no CSV/state reset).
+try:
+    from plc_report import build_pdf as _build_pdf
+except Exception:                       # pragma: no cover
+    _build_pdf = None
+try:
+    import pdf_push as _pdf_push
+except Exception:                       # pragma: no cover
+    _pdf_push = None
+
+BATCH_STATE_PATH = os.path.join(_PROJECT_ROOT, "data", "batch_state.json")
+
 # ── SMB credentials — cached here for the backup-and-clear web action ─────────
 _SMB_HOST = _SMB_SHARE = _SMB_USER = _SMB_PASS = _SMB_SUBDIR = ""
 try:
@@ -328,6 +341,95 @@ def events():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# "Get Current Data" — interim report for the in-progress (or paused) pallet.
+#
+# The reader keeps the current pallet's CSV + data/batch_state.json alive across
+# every machine idle/STOP; the final per-pallet PDF is generated only when the
+# pallet number changes. This endpoint lets an operator pull the data collected
+# SO FAR as a PDF on demand and push it to SMB — a snapshot that does NOT touch
+# the reader's CSV, serial sequence, or state, so the eventual full per-pallet
+# report is unaffected.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _read_csv_rows(csv_path: str) -> list:
+    """Rebuild per-item rows from a session CSV (mirrors plc_reader)."""
+    import csv as _csv
+    rows = []
+    try:
+        with open(csv_path, newline="") as f:
+            for r in _csv.DictReader(f):
+                rows.append({
+                    "serial":         r.get("serial", ""),
+                    "item_no":        int(r.get("item_no") or 0),
+                    "pallet_no":      r.get("pallet_no", ""),
+                    "lot_no":         r.get("lot_no", ""),
+                    "datetime":       r.get("datetime", ""),
+                    "product_weight": r.get("product_weight", ""),
+                    "read_weight":    r.get("read_weight", ""),
+                    "status":         r.get("status", ""),
+                    "barcode":        r.get("barcode", ""),
+                })
+    except (FileNotFoundError, OSError, ValueError):
+        pass
+    return rows
+
+
+@app.route("/api/report/current", methods=["POST"])
+def api_report_current():
+    if _build_pdf is None:
+        return jsonify({"ok": False, "error": "PDF builder unavailable"}), 500
+
+    # 1. Locate the in-progress session via the reader's batch state.
+    try:
+        with open(BATCH_STATE_PATH) as f:
+            state = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return jsonify({"ok": False,
+                        "error": "No active batch — nothing to report yet"}), 409
+    if not state.get("active"):
+        return jsonify({"ok": False,
+                        "error": "No active batch — nothing to report yet"}), 409
+
+    csv_path   = state.get("csv_path", "")
+    batch_data = state.get("batch_data", {}) or {}
+    rows       = _read_csv_rows(csv_path) if csv_path else []
+    if not rows:
+        return jsonify({"ok": False,
+                        "error": "No items recorded in the current pallet yet"}), 409
+
+    # 2. Build an INTERIM PDF (distinct name — never collides with the final
+    #    per-pallet report and is clearly marked as a snapshot).
+    batch_no  = batch_data.get("batch_no", 0)
+    pallet_no = state.get("pallet_no", batch_data.get("pallet_no", 0))
+    ts        = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name      = f"report_batch{batch_no}_pallet{pallet_no}_{ts}_INTERIM.pdf"
+    path      = os.path.join(REPORTS_DIR, name)
+    now_str   = datetime.now().strftime("%d/%m/%Y  %H:%M:%S")
+    try:
+        os.makedirs(REPORTS_DIR, exist_ok=True)
+        _build_pdf(batch_data, rows, path,
+                   start_dt=state.get("start_dt", ""), stop_dt=now_str)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"PDF build failed: {e}"}), 500
+
+    # 3. Send it (store-and-forward — queues if SMB is down). Non-blocking so the
+    #    button responds immediately. Reader's CSV/state/sequence untouched.
+    if _pdf_push is not None:
+        try:
+            _pdf_push.push_pdf_async(path)
+        except Exception:
+            pass
+    if eventlog is not None:
+        try:
+            eventlog.log_report(name, len(rows), batch_no=batch_no)
+        except Exception:
+            pass
+
+    return jsonify({"ok": True, "file": name, "items": len(rows),
+                    "batch_no": batch_no, "pallet_no": pallet_no})
 
 
 # ─────────────────────────────────────────────────────────────────────────────

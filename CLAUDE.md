@@ -10,7 +10,7 @@ Industrial check-weigher data logger for a **Mitsubishi PLC** line at **Sai Sama
 
 - Raspberry Pi 4B connects to a Mitsubishi PLC via **SLMP / 3E frame protocol** (TCP).
 - Every item that passes the check-weigher triggers a data capture (weight, accept/reject, barcode).
-- At end-of-batch (STOP pressed), a **PDF report** is generated and automatically pushed to a Windows PC on the network via SMB.
+- Reports are **per-pallet**: one PDF per pallet number, generated when the pallet number *changes* — NOT when the machine stops. A pallet's data accumulates across any number of idle/run cycles (the CSV is kept alive on STOP), so the item serial sequence stays consistent for each pallet. The report is auto-pushed to a Windows PC via SMB. An operator can also pull an **interim snapshot** of the current pallet on demand (archive page → "Get Current Data") without breaking the sequence.
 - If the SMB target is offline, reports are **queued persistently** and delivered when it comes back — never re-sent.
 - A **live web dashboard** shows real-time weight, batch stats, and a live **Transmission & Event Log**.
 - A **PDF report viewer** at port 8080 shows all past reports with live auto-refresh.
@@ -50,13 +50,28 @@ break the priority data-collection task.
   CAUSE / ACTION / RESULT explanation (throttled per-problem).
 - Existing power-failure batch recovery (`batch_state.json`) and SMB
   store-and-forward remain; recovery events now also land in the journal.
-- **Power-cut batch continuation (v1.37+)**: the watcher no longer finalizes
-  an interrupted batch at boot — it leaves `batch_state.json` + its CSV intact.
-  When the machine next runs, `plc_reader` reads the live PLC `batch_no` and
-  decides: **same batch → RESUME** (reopen the CSV in append mode, restore
-  counters/serial/pallet, one continuous report) ; **different/unreadable batch
-  → finalize the interrupted one as a `_RECOVERED` report and start fresh.**
-  See `plc_reader._resolve_interrupted_batch`.
+- **Per-pallet reporting + pause/resume (v1.38+)**: a machine STOP (or shutdown,
+  or PLC disconnect) **pauses** the batch — `plc_reader.pause_batch()` flushes +
+  closes the CSV but generates **NO PDF** and leaves `batch_state.json` + the CSV
+  intact (the watcher relaunches the reader on the next START). On (re)start,
+  `plc_reader._resume_or_finalize()` compares the live PLC **(batch_no, pallet)**
+  with the saved one:
+    - **same batch AND same pallet → RESUME** — reopen the CSV in append mode,
+      carry the running serial/counters, one continuous per-pallet report;
+    - **different pallet/batch → FINALIZE** the saved pallet as one PDF
+      (`_finalize_session`), then start fresh.
+  A PDF is therefore produced only on a **pallet-number change** (mid-run via the
+  per-item boundary detection → `write_and_close_csv`, or at restart via
+  `_resume_or_finalize`) or on the **manual "Get Current Data"** button. The item
+  serial (`serial_state.json`, keyed on batch+pallet) stays consistent for a
+  pallet across every stop/start. Power-cut recovery is just another resume case;
+  a finalize that can't read the live PLC is tagged `_RECOVERED`.
+- **Interim report on demand**: archive page → "Get Current Data" → `POST
+  /api/report/current` builds a PDF from the *current* (still-open) pallet CSV and
+  pushes it, marked `..._INTERIM.pdf`. It is a read-only snapshot — it does NOT
+  touch the reader's CSV, serial sequence, or state, so the eventual full
+  per-pallet report is unaffected. Works whether the machine is running or idle
+  (app.py reads `data/batch_state.json` + the CSV directly; no reader needed).
 
 ---
 
@@ -85,7 +100,8 @@ break the priority data-collection task.
 ├── plc_reader.py           Main data collector. Polls M200/M260/M262 at 50ms.
 │                           On each item trigger: reads all registers, writes CSV row,
 │                           updates /tmp/plc_live.json for the live dashboard.
-│                           On STOP (M102 falling edge): builds PDF, calls push_pdf_async().
+│                           On STOP (M102 falling edge): pause_batch() — keeps CSV+state, NO PDF.
+│                           PDF is built only on a pallet-number change or the "Get Current Data" button.
 │
 ├── plc_report.py           PDF builder (ReportLab). Called by plc_reader at batch end.
 │                           Also runnable standalone for testing: python3 plc_report.py
@@ -139,7 +155,9 @@ break the priority data-collection task.
 │   │                         /live      → live operations dashboard
 │   │                         /api/live  → raw JSON from /tmp/plc_live.json
 │   │                         /live-events → SSE stream (item events + status)
-│   │                         /events    → SSE stream (new PDF arrivals)
+│   │                         /events    → SSE stream (add/remove file events — live archive)
+│   │                         /api/report/current → POST: build+push interim PDF of the
+│   │                                       current pallet ("Get Current Data" button)
 │   │                         /pdf/<f>   → serve PDF inline
 │   │                         /download/<f> → download PDF
 │   │
@@ -172,7 +190,8 @@ break the priority data-collection task.
 | M260 | OVER WEIGHT — item trigger |
 | M262 | UNDER WEIGHT — item trigger |
 
-M102 falling edge = STOP pressed → end batch, build PDF.
+M102 falling edge = STOP pressed → **pause** batch (keep CSV + state, no PDF). The
+report is built on the next pallet-number change, or on the "Get Current Data" button.
 
 ### Word devices (D)
 
