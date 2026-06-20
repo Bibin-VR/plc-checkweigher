@@ -52,45 +52,12 @@ _BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 BATCH_STATE = os.path.join(_BASE_DIR, "data", "batch_state.json")
 
 # ── Per-pallet running serial number ─────────────────────────────────────────
-# A serial that starts at 1 and counts up for every item in a pallet. It
-# CONTINUES across PDF reports / reader restarts as long as the pallet number
-# is unchanged (e.g. the machine is stopped mid-pallet and restarted), and
-# RESETS to 1 the moment the pallet number changes. Persisted to disk so it
-# survives the reader process exiting at every batch end.
-SERIAL_STATE = os.path.join(_BASE_DIR, "data", "serial_state.json")
-
-
-def _next_serial(batch_no, pallet_no: int) -> int:
-    """
-    Running item serial within a (batch, pallet).
-
-    Continues from where it left off across a STOP / report / reader restart as
-    long as BOTH the batch number and the pallet number are unchanged. Resets to
-    1 when EITHER changes — i.e. a new pallet OR a new batch starts fresh at
-    0001 (keying on the batch too means a new batch always resets, even if the
-    PLC's pallet counter happens to repeat a number).
-    """
-    try:
-        with open(SERIAL_STATE) as f:
-            st = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        st = {}
-    if st.get("batch_no") == batch_no and st.get("pallet_no") == pallet_no:
-        serial = int(st.get("serial", 0)) + 1
-    else:
-        serial = 1
-    try:
-        os.makedirs(os.path.dirname(SERIAL_STATE), exist_ok=True)
-        tmp = SERIAL_STATE + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump({"batch_no": batch_no, "pallet_no": pallet_no,
-                       "serial": serial}, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, SERIAL_STATE)
-    except Exception as e:
-        print(f"  [serial] save failed: {e}")
-    return serial
+# The item serial is simply the item's position within the CURRENT pallet's
+# single report (= item_count): it starts at 1 for each pallet, increments per
+# item, and continues correctly across a STOP/START because item_count + the
+# report rows are restored together on resume. No separate persisted counter —
+# the old serial_state.json drifted out of sync with the rows when a report was
+# finalized while the pallet number stayed the same (serials started at 2).
 
 
 def _save_batch_state(state: dict):
@@ -736,9 +703,12 @@ def main():
                 if not batch_start_dt:
                     batch_start_dt = data.get("datetime", _now_str())
 
-                # Running serial within (batch, pallet): continues across
-                # PDFs/restarts, resets to 1 on a new pallet OR a new batch.
-                serial_no = _next_serial(data.get("batch_no"), snap_pallet)
+                # Serial = this item's position in the CURRENT pallet report.
+                # item_count is reset to 1 on a pallet change and restored from
+                # the CSV on resume, so the serial is always 1..N within the
+                # pallet's single report — no separate persisted counter to drift
+                # out of sync with the rows (which caused serials to start at 2).
+                serial_no = item_count
 
                 row = {
                     "serial"         : serial_no,

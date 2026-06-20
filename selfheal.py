@@ -92,7 +92,6 @@ CONFIG_FILES = [
 SNAPSHOT_FILES = CONFIG_FILES + [
     os.path.join(DATA_DIR, "delivery_sent.log"),
     os.path.join(DATA_DIR, "delivery_queue.json"),
-    os.path.join(DATA_DIR, "serial_state.json"),
 ]
 
 

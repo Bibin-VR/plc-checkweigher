@@ -62,10 +62,17 @@ break the priority data-collection task.
       (`_finalize_session`), then start fresh.
   A PDF is therefore produced only on a **pallet-number change** (mid-run via the
   per-item boundary detection → `write_and_close_csv`, or at restart via
-  `_resume_or_finalize`) or on the **manual "Get Current Data"** button. The item
-  serial (`serial_state.json`, keyed on batch+pallet) stays consistent for a
-  pallet across every stop/start. Power-cut recovery is just another resume case;
-  a finalize that can't read the live PLC is tagged `_RECOVERED`.
+  `_resume_or_finalize`) or on the **manual "Get Current Data"** button. The
+  resume decision compares the **raw D3002** saved in `batch_state` (`d3002_raw`)
+  against the live raw D3002 — NOT the floored `sw_pallet` (which is ≥1 while
+  D3002 is 0 for the first pallet, and would otherwise spuriously finalize/split
+  a pallet on every stop/start). The item **serial = its position in the current
+  pallet report (`item_count`)** — it starts at 1 per pallet and is restored with
+  the rows on resume, so it is always 1..N. (There is no separate
+  `serial_state.json`; that persisted counter drifted out of sync with the rows
+  when a report finalized while the pallet number stayed the same, which made
+  serials start at 2.) Power-cut recovery is just another resume case; a finalize
+  that can't read the live PLC is tagged `_RECOVERED`.
 - **Interim report on demand**: archive page → "Get Current Data" → `POST
   /api/report/current` builds a PDF from the *current* (still-open) pallet CSV and
   pushes it, marked `..._INTERIM.pdf`. It is a read-only snapshot — it does NOT
