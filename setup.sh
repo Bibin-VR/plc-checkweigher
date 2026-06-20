@@ -277,6 +277,42 @@ setup_wifi() {
     fi
 }
 
+# ── 5b. Ethernet — static IP for PLC communication ───────────────────────────
+setup_eth0_static() {
+    step "Ethernet (eth0) — static IP for PLC"
+
+    local ETH_CON="plc-eth"
+    local ETH_IP="192.168.3.10"
+    local ETH_PREFIX="24"        # 255.255.255.0
+
+    if ! ip link show eth0 &>/dev/null; then
+        warn "No eth0 found — skipping static IP setup."
+        return
+    fi
+
+    # Remove any existing managed connection on eth0 to start clean.
+    nmcli -t -f NAME,DEVICE con show \
+        | awk -F: '$2=="eth0"{print $1}' \
+        | while read -r CON; do
+            nmcli connection delete "$CON" 2>/dev/null || true
+        done
+
+    nmcli connection add \
+        type ethernet \
+        ifname eth0 \
+        con-name "${ETH_CON}" \
+        ipv4.method manual \
+        ipv4.addresses "${ETH_IP}/${ETH_PREFIX}" \
+        ipv4.gateway "" \
+        ipv4.dns "" \
+        ipv6.method disabled \
+        connection.autoconnect yes \
+        connection.autoconnect-priority 100 2>/dev/null
+
+    nmcli connection up "${ETH_CON}" 2>/dev/null || true
+    ok "eth0 → ${ETH_IP}/${ETH_PREFIX} (static, no gateway — PLC subnet only)"
+}
+
 # ── 6b. Web maintenance terminal access code ─────────────────────────────────
 setup_console_passwd() {
     step "Maintenance console access code ..."
@@ -988,6 +1024,7 @@ main() {
     setup_dirs                # 4
     install_cli               # 5  — plc_checkweigher status command
     setup_wifi                # 6  — interactive WiFi picker
+    setup_eth0_static         # 6b — eth0 static 192.168.3.10/24 for PLC comms
     setup_smb                 # 7  — interactive SMB config → smb_config.py
     setup_console_passwd      # 7b — web maintenance terminal access code
     setup_network_online      # 8
