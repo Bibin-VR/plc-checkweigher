@@ -685,7 +685,8 @@ def main():
 
                 last_pallet = snap_pallet
 
-                # Wait for the PLC to finish writing D4700-D4703 (net weight, DESUB result).
+                # Wait for the PLC to finish writing D4700-D4701 (net weight,
+                # float32 DESUB result = gross D750 − tare D4050).
                 time.sleep(1.0)
 
                 try:

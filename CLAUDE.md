@@ -186,7 +186,10 @@ M102 falling edge = STOP pressed → end batch, build PDF.
 | D200[11] | 1 | ascii_str | Weighing scale ID |
 | D257 | 4 | ascii_str | Machine name |
 | D280+D281 | 2 | float32 (EMOV lo/hi) | Product (nominal) weight in grams |
-| D4700–D4703 | 4 | float64 (DESUB double64) | Net read weight in grams — result of `DESUB D750, D4050, D4700` (gross − tare) |
+| D4700+D4701 | 2 | float32 (DESUB single, net) | **Net** read weight in grams — result of `DESUB D750, D4050, D4700` (gross − tare). DESUB operands are single-precision (`EMOV D750→D282` proves D750 is float32), so the result is **float32**, NOT float64. |
+| D750+D751 | 2 | float32 | **Gross** weight (live scale). `EMOV D750→D282` mirrors it to D282. Do NOT use as net read_weight. |
+| D4050+D4051 | 2 | float32 | Tare weight (set via `EMOV`). |
+| D282+D283 | 2 | float32 (= gross via EMOV) | Mirror of D750 gross — was wrongly used as the read-weight fallback; removed. |
 | D290 | 4 | ascii_str | Stage |
 | D500+D501 | 2 | float32 | Lower weight limit |
 | D510+D511 | 2 | float32 | Upper weight limit |
@@ -204,7 +207,17 @@ hi = regs[offset + 1] & 0xFFFF
 val = struct.unpack(">f", struct.pack(">HH", hi, lo))[0]
 ```
 
-**float64 decode (DEMOV/DESUB format — 4 words, w0=LSW…w3=MSW):**
+**Net read weight (D4700) is float32 — same decode as float32 above.** The
+`DESUB D750, D4050, D4700` ladder rung subtracts two single-precision floats
+(D750 gross, D4050 tare), so D4700+D4701 hold a 2-word float32 net weight.
+Reading it as float64 (4 words) yields a tiny denormal (~1e-315) that fails the
+`abs(val) > 1e-9` check, which previously caused a silent fallback to D282
+(gross) — that is why the display/report showed the gross weight (~510) instead
+of the net (~480). Fixed in regmap: `read_weight` = D4700, 2 words, float32, no
+gross fallback.
+
+**float64 decode (DEMOV/EDSUB double — 4 words, w0=LSW…w3=MSW) — reference only,
+not used by any current field:**
 ```python
 w0, w1, w2, w3 = [regs[offset+i] & 0xFFFF for i in range(4)]
 val = struct.unpack(">d", struct.pack(">HHHH", w3, w2, w1, w0))[0]
@@ -218,9 +231,10 @@ resolved at runtime — `plc_reader.py` and `plc_report.py` read through
 source of truth: re-point one field and the whole project follows.
 
 - Override file `data/register_map.json` (written by the scanner) is merged over
-  `FIELDS`, e.g. `{"read_weight": {"device":"D282","words":2,"format":"float32"}}`.
-- `read_weight` default: **D4700** (float64, net) → fallback **D282** (float32,
-  gross) if zero/invalid. `product_weight`: **D280** (float32).
+  `FIELDS`, e.g. `{"read_weight": {"device":"D4700","words":2,"format":"float32"}}`.
+- `read_weight` default: **D4700** (float32, 2 words, **net**). No fallback —
+  D282 holds the gross weight and must never substitute for net.
+  `product_weight`: **D280** (float32).
 - **Date & time come from the Raspberry Pi clock**, NOT the PLC (SD8013 was
   inconsistent). The Pi is NTP-synced.
 

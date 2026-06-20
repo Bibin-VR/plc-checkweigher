@@ -10,7 +10,7 @@ changing a register in ONE place — the override file data/register_map.json,
 written automatically by the scanner — updates the whole project.
 
     data/register_map.json   (optional, merged over FIELDS)
-        {"read_weight": {"device":"D282","words":2,"format":"float32"}}
+        {"read_weight": {"device":"D4700","words":2,"format":"float32"}}
 
 `plc_checkweigher fix -registers` reads the live PLC, decodes every field and a
 broad sweep of the D-area, validates each field against its signature, and —
@@ -39,7 +39,12 @@ STATUS_ENUM = {"ACCEPT", "OK", "OVER", "UNDER", "OVER WEIGHT", "UNDER WEIGHT",
 
 # ── Field registry ─────────────────────────────────────────────────────────────
 # Each field: device (absolute start), words (to read), format, sig (signature
-# class used by the scanner), label. read_weight also carries a fallback source.
+# class used by the scanner), label.
+# read_weight = NET weight at D4700 (float32, 2 words) = result of the ladder
+#   `DESUB D750, D4050, D4700` (gross D750 − tare D4050). DESUB operands are
+#   single-precision (EMOV D750→D282 proves D750 is float32), so the result is
+#   single-precision float32 too — NOT float64. D282 holds the GROSS weight
+#   (EMOV D750→D282) and must never be used as the net read_weight.
 # sig classes:
 #   weight  — finite float, 0 < |v| <= 1e5            (distinctive → auto-relocate)
 #   status  — ASCII in STATUS_ENUM                     (distinctive → auto-relocate)
@@ -57,8 +62,7 @@ FIELDS = {
     "machine":          {"device": "D257",  "words": 4,  "format": "ascii",   "sig": "text",   "label": "Machine name"},
     "stage":            {"device": "D290",  "words": 4,  "format": "ascii",   "sig": "text",   "label": "Stage"},
     "product_weight":   {"device": "D280",  "words": 2,  "format": "float32", "sig": "weight", "label": "Product (nominal) weight"},
-    "read_weight":      {"device": "D4700", "words": 4,  "format": "float64", "sig": "weight", "label": "Read weight",
-                         "fallback": {"device": "D282", "words": 2, "format": "float32"}},
+    "read_weight":      {"device": "D4700", "words": 2,  "format": "float32", "sig": "weight", "label": "Read weight (net)"},
     "lower_limit":      {"device": "D500",  "words": 2,  "format": "float32", "sig": "weight", "label": "Lower weight limit"},
     "upper_limit":      {"device": "D510",  "words": 2,  "format": "float32", "sig": "weight", "label": "Upper weight limit"},
     "pallet":           {"device": "D3002", "words": 2,  "format": "int32",   "sig": "int",    "label": "Pallet counter"},
