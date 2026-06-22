@@ -334,6 +334,34 @@ setup_console_passwd() {
     ok "Console access code set  (change later: plc_checkweigher console-passwd)"
 }
 
+# ── 7c. PLC register map — optional manual configuration ─────────────────────
+setup_registers() {
+    step "PLC Register Map"
+    echo ""
+    echo -e "  ${C}Each PLC value (weights, status, barcode, names) is read from a${NC}"
+    echo -e "  ${C}configurable register. You can set them now by typing the register${NC}"
+    echo -e "  ${C}name (e.g. D4700) or number (4700) — the value is read back from the${NC}"
+    echo -e "  ${C}live PLC so you can confirm it before saving.${NC}"
+    echo ""
+    info "Best done with the line running (weights/status populate during an item)."
+    info "You can always do this later:  plc_checkweigher registers"
+    echo ""
+
+    local ANS
+    read -r -p "  Configure PLC registers now? [y/N]: " ANS </dev/tty
+    if [[ "${ANS,,}" != "y" && "${ANS,,}" != "yes" ]]; then
+        info "Skipped — defaults kept. Run 'plc_checkweigher registers' anytime."
+        return
+    fi
+
+    mkdir -p "${DATA_DIR}"
+    ( cd "${INSTALL_DIR}" && "${VENV_DIR}/bin/python3" regmap.py configure </dev/tty ) || \
+        warn "Register configuration did not complete — defaults kept."
+    # Keep the override pi-writable so the web terminal / CLI can update it later.
+    [[ -f "${DATA_DIR}/register_map.json" ]] && \
+        chown "${PI_USER}:${PI_USER}" "${DATA_DIR}/register_map.json" 2>/dev/null || true
+}
+
 # ── 6. SMB file sharing — interactive ────────────────────────────────────────
 setup_smb() {
     step "SMB File Sharing Setup"
@@ -1056,6 +1084,7 @@ main() {
     setup_eth0_static         # 6b — eth0 static 192.168.3.10/24 for PLC comms
     setup_smb                 # 7  — interactive SMB config → smb_config.py
     setup_console_passwd      # 7b — web maintenance terminal access code
+    setup_registers           # 7c — optional manual PLC register configuration
     setup_network_online      # 8
     install_services          # 9
     setup_boot_logo           # 10 — Plymouth: logo + "Sai Samarth Engineering"

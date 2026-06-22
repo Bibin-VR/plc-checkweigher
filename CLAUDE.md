@@ -264,6 +264,18 @@ source of truth: re-point one field and the whole project follows.
 - **Date & time come from the Raspberry Pi clock**, NOT the PLC (SD8013 was
   inconsistent). The Pi is NTP-synced.
 
+**Manual configuration (v1.39+)** — `plc_checkweigher registers` is an
+interactive wizard: it lists every field with its live decoded value, lets the
+operator pick one (by name or list-number), type the new register (name `D4700`
+or bare number `4700`), choose format + word count, then **reads the value back
+from the live PLC so it can be confirmed before saving** to
+`data/register_map.json`. Also: `registers show` (table + live values),
+`registers set <field> <device> [words] [format]` (non-interactive),
+`registers reset [field]` (revert to `FIELDS` default). The installer
+(`setup.sh` step 7c) offers to run the wizard. Functions live in `regmap.py`
+(`configure_interactive`, `show`, `set_field`, `reset_field`). The CLI restarts
+`plc_watcher` after a change so the new map is live immediately.
+
 `plc_checkweigher fix -registers` reads the live PLC, decodes every field plus a
 broad D-area sweep, validates each field against a signature, and re-locates
 moved registers:
@@ -382,6 +394,12 @@ plc_checkweigher display on/off    # Start/stop LightDM (HDMI display)
 plc_checkweigher display status    # Show display state
 
 plc_checkweigher smb-config        # Interactive: update smb_config.py fields
+
+plc_checkweigher registers         # Interactive: manually set PLC registers (read live + confirm)
+plc_checkweigher registers show    # Table of every field + its live decoded value
+plc_checkweigher registers set F DEV [W FMT]   # Set one field non-interactively
+plc_checkweigher registers reset [field]       # Revert a field (or all) to defaults
+plc_checkweigher fix -registers    # Auto-detect moved registers (run during production)
 ```
 
 **Hotspot workflow (direct PC connection):**

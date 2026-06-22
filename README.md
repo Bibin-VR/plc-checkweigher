@@ -69,3 +69,26 @@ Edit the top of each file:
 | `plc_watcher.py` | `PLC_IP`, `PLC_PORT` |
 | `pdf_push.py` | `SMB_HOST`, `SMB_SHARE`, `SMB_USERNAME`, `SMB_PASSWORD` |
 | `web/app.py` | `REPORTS_DIR`, `PORT` |
+
+### PLC registers
+
+Every PLC value (weights, status, barcode, names, limits …) is read from a
+register declared in `regmap.py` and overridable at runtime via
+`data/register_map.json` — the single source of truth that `plc_reader.py` and
+`plc_report.py` both follow. No source edit is needed to re-point a value.
+
+Configure them by hand (the installer also offers this step):
+
+```bash
+plc_checkweigher registers          # interactive: pick a field, type the register
+                                    # name (D4700) or number (4700), read the value
+                                    # back from the live PLC, confirm, and save
+plc_checkweigher registers show     # table of every field + its live decoded value
+plc_checkweigher registers set read_weight D4700 2 float32   # set one field directly
+plc_checkweigher registers reset [field]   # revert a field (or all) to defaults
+plc_checkweigher fix -registers     # auto-detect moved registers (run during production)
+```
+
+Formats: `int16`, `int16s`, `int32`, `float32`, `float64`, `ascii`. Changes take
+effect immediately on the reader's next poll (the CLI restarts `plc_watcher` to
+apply them right away).

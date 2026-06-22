@@ -736,6 +736,74 @@ console-passwd)
     ;;
 
 # ─────────────────────────────────────────────────────────────────────────────
+# REGISTERS — manually configure / verify the PLC register map
+# Usage: registers [show | set <field> <device> [words] [format] | reset [field]]
+#        registers            interactive wizard (read live, confirm, save)
+# ─────────────────────────────────────────────────────────────────────────────
+registers)
+    SUBCMD="${1:-}"; shift || true
+    PYRUN() { (cd "${INSTALL_DIR}" && "${PYTHON}" regmap.py "$@"); }
+    case "$SUBCMD" in
+    show)
+        banner "PLC Register Map"
+        echo ""
+        PYRUN show
+        echo ""
+        info "Configure a field:  plc_checkweigher registers"
+        echo ""
+        ;;
+    set)
+        if [[ $# -lt 2 ]]; then
+            err "Usage: plc_checkweigher registers set <field> <device> [words] [format]"
+            info "e.g.  plc_checkweigher registers set read_weight D4700 2 float32"
+            exit 1
+        fi
+        banner "Set Register"
+        echo ""
+        if PYRUN set "$@"; then
+            ok "Register map updated"
+            need_sudo
+            sudo systemctl restart plc_watcher 2>/dev/null \
+                && info "plc_watcher restarted — new mapping is live" \
+                || warn "Could not restart plc_watcher — change applies on next poll"
+        fi
+        echo ""
+        ;;
+    reset)
+        banner "Reset Register Map"
+        echo ""
+        PYRUN reset "${1:-}"
+        need_sudo
+        sudo systemctl restart plc_watcher 2>/dev/null \
+            && info "plc_watcher restarted — defaults are live" \
+            || warn "Could not restart plc_watcher — change applies on next poll"
+        echo ""
+        ;;
+    scan)
+        # alias to the auto-detecting scanner
+        exec "$0" fix -registers
+        ;;
+    ""|configure)
+        banner "Configure PLC Registers"
+        echo ""
+        info "Type a register name (D4700) or number (4700) for each field, then"
+        info "the value is read back from the live PLC so you can confirm it."
+        echo ""
+        if PYRUN configure; then
+            need_sudo
+            sudo systemctl restart plc_watcher 2>/dev/null \
+                && ok "plc_watcher restarted — new register map is live now" \
+                || warn "Could not restart plc_watcher — change applies on next poll"
+        fi
+        echo ""
+        ;;
+    *)
+        echo "Usage: plc_checkweigher registers [show | set <field> <device> [words] [format] | reset [field] | scan]"
+        ;;
+    esac
+    ;;
+
+# ─────────────────────────────────────────────────────────────────────────────
 # FIX — auto-detect and repair common issues
 # Usage: fix [-wifi] [-health] [-programs] [-errors] [-registers]  (no flags = all but registers)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2070,6 +2138,10 @@ help|--help|-h)
     echo ""
     echo -e "  ${W}Configuration${NC}"
     echo "    smb-config                 Interactively update SMB delivery target"
+    echo "    registers                  Manually configure PLC registers (read live + confirm)"
+    echo "    registers show             Show the register map + live decoded values"
+    echo "    registers set F DEV [W FMT]  Set one field, e.g. registers set read_weight D4700 2 float32"
+    echo "    registers reset [field]    Revert a field (or all) to built-in defaults"
     echo "    console-passwd             Set/change web maintenance terminal access code"
     echo "    push-test                  Push latest PDF to SMB target now"
     echo "    update                     Pull latest code from GitHub and restart services"

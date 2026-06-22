@@ -382,6 +382,252 @@ def scan(write=True):
     return changed, "\n".join(out)
 
 
+# ── manual register configuration ───────────────────────────────────────────────
+# The scanner above AUTO-detects moved registers. The functions below let an
+# operator set them BY HAND — type a register name/number, read the live value
+# back to confirm it's right, and persist it to data/register_map.json (which is
+# merged over FIELDS, so the whole project follows). Used at install time
+# (setup.sh) and any time later via `plc_checkweigher registers`.
+
+FORMATS = ["int16", "int16s", "int32", "float32", "float64", "ascii"]
+
+# words a format needs by default (ascii is variable → keep whatever is given)
+_FORMAT_WORDS = {"int16": 1, "int16s": 1, "int32": 2, "float32": 2, "float64": 4}
+
+
+def normalize_device(s):
+    """'d4700' / '4700' / ' D4700 ' → 'D4700'. A bare number defaults to D-area."""
+    s = (s or "").strip().upper()
+    if not s:
+        return None
+    if s[0].isdigit():
+        return "D" + s
+    return s
+
+
+def _open_plc():
+    try:
+        return _connect()
+    except Exception:
+        return None
+
+
+def _safe_read(plc):
+    """A safe_read(dev, n) closure over a live PLC, or zeros if not connected."""
+    if plc is None:
+        return lambda dev, n: [0] * int(n)
+
+    def sread(dev, n):
+        for _ in range(2):
+            try:
+                return plc.batchread_wordunits(headdevice=dev, readsize=int(n))
+            except Exception:
+                time.sleep(0.05)
+        return [0] * int(n)
+    return sread
+
+
+def _fmt(val):
+    return f"{val:.3f}" if isinstance(val, float) else str(val)
+
+
+def _default_words(fmt, current):
+    return _FORMAT_WORDS.get(fmt, current)
+
+
+def resolve_field(token):
+    """Map a user token (field name, or 1-based list index) to a field name."""
+    token = (token or "").strip()
+    if token in FIELDS:
+        return token
+    if token.isdigit():
+        names = list(FIELDS)
+        i = int(token) - 1
+        if 0 <= i < len(names):
+            return names[i]
+    return None
+
+
+def show(sread=None):
+    """Print every field, its active spec, and its live decoded value."""
+    own = sread is None
+    plc = _open_plc() if own else None
+    if own:
+        sread = _safe_read(plc)
+        if plc is None:
+            print(f"  ! PLC {PLC_IP}:{PLC_PORT} unreachable — showing the map only "
+                  f"(no live values).\n")
+    print(f"  {'#':<3}{'Field':<17}{'Device':<9}{'Format':<9}{'Wd':<4}{'Valid':<7}Live value")
+    print(f"  {'-'*2:<3}{'-'*16:<17}{'-'*8:<9}{'-'*8:<9}{'-'*3:<4}{'-'*6:<7}{'-'*22}")
+    for i, name in enumerate(FIELDS, 1):
+        s = spec(name)
+        val = read_field(sread, name) if plc is not None else None
+        ok = _valid(s.get("sig", "any"), val) if plc is not None else None
+        okstr = "-" if ok is None else ("yes" if ok else "NO")
+        shown = _fmt(val) if plc is not None else "-"
+        if len(shown) > 22:
+            shown = shown[:21] + "…"
+        print(f"  {i:<3}{name:<17}{s['device']:<9}{s.get('format',''):<9}"
+              f"{str(s.get('words',2)):<4}{okstr:<7}{shown}")
+    if own and plc is not None:
+        plc.close()
+
+
+def set_field(name, device, words=None, fmt=None, restart_note=True):
+    """Non-interactive: set one field's spec and persist it. Returns the spec."""
+    if name not in FIELDS:
+        raise ValueError(f"Unknown field '{name}'. Known: {', '.join(FIELDS)}")
+    cur = spec(name)
+    device = normalize_device(device) or cur["device"]
+    fmt = (fmt or cur.get("format", "float32")).lower()
+    if fmt not in FORMATS:
+        raise ValueError(f"Unknown format '{fmt}'. Valid: {', '.join(FORMATS)}")
+    words = int(words) if words else _default_words(fmt, int(cur.get("words", 2)))
+    upd = {"device": device, "words": words, "format": fmt}
+    save_override({name: upd})
+    print(f"  ✓ {name} → {device} ({fmt}, {words} word(s)) saved to register_map.json")
+    return upd
+
+
+def reset_field(name=None):
+    """Drop the override for one field (revert to FIELDS), or all if name is None."""
+    m = _load_override()
+    if name is None:
+        if not m:
+            print("  No overrides set — already on built-in defaults.")
+            return
+        os.makedirs(_DATA_DIR, exist_ok=True)
+        tmp = _MAP_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({}, f, indent=2)
+        os.replace(tmp, _MAP_FILE)
+        print(f"  ✓ Cleared all overrides — reverted to built-in defaults ({', '.join(m)}).")
+        return
+    if name not in m:
+        print(f"  '{name}' has no override — already on the built-in default ({spec(name)['device']}).")
+        return
+    del m[name]
+    os.makedirs(_DATA_DIR, exist_ok=True)
+    tmp = _MAP_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(m, f, indent=2)
+    os.replace(tmp, _MAP_FILE)
+    print(f"  ✓ Reset '{name}' to built-in default {spec(name)['device']}.")
+
+
+def _configure_one(name, sread, live, updates):
+    s = spec(name)
+    label = FIELDS.get(name, {}).get("label", name)
+    print(f"\n  ── {name}  ({label}) " + "─" * max(0, 40 - len(name) - len(label)))
+    print(f"     current : {s['device']}  {s.get('format')}  {s.get('words', 2)} word(s)"
+          + (f"   live = {_fmt(read_field(sread, name))}" if live else ""))
+
+    dev_in = _ask(f"     Register — name (D4700) or number (4700) [{s['device']}]: ")
+    device = normalize_device(dev_in) or s["device"]
+
+    fmt_in = _ask(f"     Format {'/'.join(FORMATS)} [{s.get('format')}]: ").lower()
+    fmt = fmt_in or s.get("format", "float32")
+    if fmt not in FORMATS:
+        print(f"     ! Unknown format '{fmt}' — keeping {s.get('format')}")
+        fmt = s.get("format", "float32")
+
+    dw = _default_words(fmt, int(s.get("words", 2)))
+    w_in = _ask(f"     Words to read [{dw}]: ")
+    words = int(w_in) if w_in.isdigit() else dw
+
+    if live:
+        val = decode(sread(device, words), fmt)
+        sig = FIELDS.get(name, {}).get("sig", "any")
+        tag = "✓ matches expected signature" if _valid(sig, val) \
+            else f"⚠ does NOT match the expected '{sig}' signature"
+        print(f"\n     → {device} as {fmt} ({words} word(s)) = {_fmt(val)}   {tag}")
+    else:
+        print(f"\n     → {device} as {fmt} ({words} word(s))  (PLC offline — not verified)")
+
+    if _ask("     Save this mapping? [Y/n]: ").lower() in ("", "y", "yes"):
+        updates[name] = {"device": device, "words": int(words), "format": fmt}
+        print(f"     ✓ queued: {name} → {device}")
+    else:
+        print("     skipped — no change to this field")
+
+
+def _ask(prompt):
+    try:
+        return input(prompt).strip()
+    except EOFError:
+        return ""
+
+
+def configure_interactive(only=None):
+    """
+    Manual register-configuration wizard. Lists every field with its live value,
+    lets the operator pick one (by name or list-number), type the register
+    (name or number), choose format + word count, reads the value back live to
+    confirm, and persists confirmed mappings to data/register_map.json.
+    Returns True if anything changed.
+    """
+    if only and only not in FIELDS:
+        print(f"  ✗ Unknown field '{only}'. Known: {', '.join(FIELDS)}")
+        return False
+
+    plc = _open_plc()
+    live = plc is not None
+    sread = _safe_read(plc)
+    if not live:
+        print(f"  ! Could not connect to PLC {PLC_IP}:{PLC_PORT}.")
+        print(f"    You can still set the map by hand, but live values can't be")
+        print(f"    shown for verification. Re-run during production to confirm.\n")
+
+    updates = {}
+    try:
+        if only:
+            _configure_one(only, sread, live, updates)
+        else:
+            while True:
+                print()
+                show(sread)
+                sel = _ask("\n  Field to configure (number or name, Enter to finish): ")
+                if not sel:
+                    break
+                name = resolve_field(sel)
+                if not name:
+                    print(f"    ✗ Unknown field '{sel}'. Type a number from the list or a field name.")
+                    continue
+                _configure_one(name, sread, live, updates)
+    finally:
+        if plc is not None:
+            try:
+                plc.close()
+            except Exception:
+                pass
+
+    if updates:
+        save_override(updates)
+        print(f"\n  ✓ Saved {len(updates)} field(s) → data/register_map.json: {', '.join(updates)}")
+        print("    plc_reader / plc_report read these new addresses on the next poll.")
+        return True
+    print("\n  No changes made.")
+    return False
+
+
 if __name__ == "__main__":
     import sys
-    scan(write=("--dry-run" not in sys.argv))
+    arg = sys.argv[1] if len(sys.argv) > 1 else "scan"
+    if arg == "configure":
+        configure_interactive(sys.argv[2] if len(sys.argv) > 2 else None)
+    elif arg == "show":
+        show()
+    elif arg == "set":
+        # set <field> <device> [words] [format]
+        try:
+            set_field(sys.argv[2], sys.argv[3],
+                      sys.argv[4] if len(sys.argv) > 4 else None,
+                      sys.argv[5] if len(sys.argv) > 5 else None)
+        except (IndexError, ValueError) as e:
+            print(f"  ✗ {e}" if isinstance(e, ValueError)
+                  else "  ✗ Usage: regmap.py set <field> <device> [words] [format]")
+            sys.exit(1)
+    elif arg == "reset":
+        reset_field(sys.argv[2] if len(sys.argv) > 2 else None)
+    else:
+        scan(write=("--dry-run" not in sys.argv))
